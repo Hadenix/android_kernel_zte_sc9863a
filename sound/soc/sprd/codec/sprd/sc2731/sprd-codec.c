@@ -257,7 +257,7 @@ extern uint32_t sprd_get_vbat_voltage(void);
 
 uint32_t sprd_get_vbat_voltage(void)
 	__attribute__ ((weak, alias("__sprd_get_vbat_voltage")));
-static uint32_t __sprd_get_vbat_voltage(void)
+static uint32_t __maybe_unused __sprd_get_vbat_voltage(void)
 {
 	pr_err("ERR: Can't get vbat!\n");
 	return 3800;

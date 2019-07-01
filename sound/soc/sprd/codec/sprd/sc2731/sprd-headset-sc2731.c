@@ -83,7 +83,7 @@
 int dsp_fm_mute_by_set_dg(void)
 	__attribute__ ((weak, alias("__dsp_fm_mute_by_set_dg")));
 
-static int __dsp_fm_mute_by_set_dg(void)
+static int __attribute__((unused)) __dsp_fm_mute_by_set_dg(void)
 {
 	pr_err("ERR: dsp_fm_mute_by_set_dg is not defined!\n");
 	return -1;
@@ -132,7 +132,7 @@ static struct sprd_headset *sprd_hdst;
 
 int vbc_close_fm_dggain(bool mute)
 	__attribute__ ((weak, alias("__vbc_close_fm_dggain")));
-static int __vbc_close_fm_dggain(bool mute)
+static int __attribute__((unused)) __vbc_close_fm_dggain(bool mute)
 {
 	pr_err("ERR: vbc_close_fm_dggain is not defined!\n");
 	return -1;

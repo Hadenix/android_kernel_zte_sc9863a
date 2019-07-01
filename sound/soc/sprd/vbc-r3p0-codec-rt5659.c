@@ -41,7 +41,7 @@ struct rt5659_machine_priv {
 int dsp_fm_mute_by_set_dg(void)
 	__attribute__ ((weak, alias("__dsp_fm_mute_by_set_dg")));
 
-static int __dsp_fm_mute_by_set_dg(void)
+static int __maybe_unused __dsp_fm_mute_by_set_dg(void)
 {
 	pr_err("ERR: dsp_fm_mute_by_set_dg is not defined!\n");
 
