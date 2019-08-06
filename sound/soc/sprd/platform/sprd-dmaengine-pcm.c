@@ -177,6 +177,8 @@ static const struct snd_pcm_hardware sprd_i2s_pcm_hardware = {
 
 atomic_t lightsleep_refcnt;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 int sprd_lightsleep_disable(const char *id, int disalbe)
 	__attribute__ ((weak, alias("__sprd_lightsleep_disable")));
 
@@ -185,6 +187,7 @@ static int __sprd_lightsleep_disable(const char *id, int disable)
 	sp_asoc_pr_dbg("NO lightsleep control function %d\n", disable);
 	return 0;
 }
+#pragma GCC diagnostic pop
 
 static inline int sprd_is_vaudio(struct snd_soc_dai *cpu_dai)
 {
@@ -1625,8 +1628,6 @@ static int sprd_pcm_preallocate_dma_ddr32_buffer(struct snd_pcm *pcm,
 	return 0;
 }
 
-static u64 sprd_pcm_dmamask = DMA_BIT_MASK(64);
-
 static int sprd_pcm_new(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_card *card = rtd->card->snd_card;
@@ -1636,7 +1637,7 @@ static int sprd_pcm_new(struct snd_soc_pcm_runtime *rtd)
 	sp_asoc_pr_dbg("%s %s\n", __func__, sprd_dai_pcm_name(cpu_dai));
 
 	if (!card->dev->dma_mask)
-		card->dev->dma_mask = &sprd_pcm_dmamask;
+		dma_set_mask(card->dev, DMA_BIT_MASK(64));
 #ifdef CONFIG_ARM64
 	card->dev->coherent_dma_mask = DMA_BIT_MASK(64);
 #else
