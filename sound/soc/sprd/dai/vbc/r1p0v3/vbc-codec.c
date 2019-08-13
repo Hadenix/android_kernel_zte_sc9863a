@@ -3969,6 +3969,7 @@ static int vbc_put_access(struct snd_kcontrol *kcontrol,
 
 	pr_info("%s, cnt=%d, enable=%d",
 		__func__, vbc_codec->vbc_access_en, enable);
+	mutex_lock(&vbc_codec->access_mutex);
 	if (enable) {
 		if (vbc_codec->vbc_access_en == 0)
 			vbc_eb_set();
@@ -3978,6 +3979,7 @@ static int vbc_put_access(struct snd_kcontrol *kcontrol,
 			vbc_eb_clear();
 		vbc_codec->vbc_access_en = 0;
 	}
+	mutex_unlock(&vbc_codec->access_mutex);
 
 	return true;
 }
@@ -4600,6 +4602,7 @@ static int sprd_vbc_codec_probe(struct platform_device *pdev)
 	vbc_codec->dgmixerstep_da23 = 1;
 	vbc_codec->fm_mutedg_step = 1;
 	mutex_init(&vbc_codec->load_mutex);
+	mutex_init(&vbc_codec->access_mutex);
 	wake_lock_init(&vbc_codec->wake_lock,
 		       WAKE_LOCK_SUSPEND, "vbc-eq-loading");
 	spin_lock_init(&(vbc_codec->lock_eq_idx));
