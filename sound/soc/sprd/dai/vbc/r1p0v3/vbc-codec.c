@@ -1406,6 +1406,7 @@ static const char *const ad3_inmux_txt[] = {
 
 #define MUX_TO_CODEC "AUDIIS0"
 #define MUX_TO_DIGFM "DIGFM"
+#define MUX_TO_EXTDIGFM  "EXTDIGFM"
 
 static const char *const ad_iis_txt[] = {
 	MUX_TO_CODEC, MUX_TO_DIGFM, "EXTDIGFM", "EXTIIS6", "AUDIIS1",
@@ -1709,6 +1710,9 @@ static int sprd_vbc_mux_put(struct snd_kcontrol *kcontrol,
 			vbc_codec->ad01_to_fm = false;
 		else if (strcmp(texts->texts[ucontrol->value.integer.value[0]],
 			MUX_TO_DIGFM) == 0)
+			vbc_codec->ad01_to_fm = true;
+		else if (strcmp(texts->texts[ucontrol->value.integer.value[0]],
+			MUX_TO_EXTDIGFM) == 0)
 			vbc_codec->ad01_to_fm = true;
 		else {
 			vbc_codec->ad01_to_fm = false;
