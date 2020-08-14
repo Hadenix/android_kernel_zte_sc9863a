@@ -1227,8 +1227,6 @@ retry_again:
 		return HEADSET_4POLE_NOT_NORMAL;
 	else
 		return HEADSET_TYPE_ERR;
-
-	return HEADSET_TYPE_ERR;
 }
 
 static void headset_button_release_verify(void)
