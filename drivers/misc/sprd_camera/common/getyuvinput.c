@@ -51,12 +51,12 @@ void InitDcamInfo(struct DCAMINFO *pDCAMInfo)
 	if (pCapDeciInfo->deci_x_en)
 		cur_width = cur_width/pCapDeciInfo->deci_x;
 	else
-		cur_width = cur_width;
+		cur_width = cur_width + 0;
 
 	if (pCapDeciInfo->deci_y_en)
 		cur_height = cur_height/pCapDeciInfo->deci_y;
 	else
-		cur_height = cur_height;
+		cur_height = cur_height + 0;
 
 	for (path_id = 0; path_id < YUV_PATH_NUM; path_id++) {
 		pYuvPathInfo = &pDCAMInfo->dcam_yuv_path[path_id];
