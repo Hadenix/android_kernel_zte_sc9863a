@@ -475,7 +475,7 @@ static void sprd_ispint_fmcu_config_done(enum isp_id idx, void *isp_handle)
 	void *data;
 	isp_isr_func user_func;
 	uint32_t dual_capture_state = 0;
-	enum dcam_id id = ISP_ID_0;
+	enum dcam_id id = (enum dcam_id)ISP_ID_0;
 	enum isp_scl_id path_id = ISP_SCL_CAP;
 	struct isp_pipe_dev *dev = NULL;
 	struct isp_pipe_dev *dev_dual = NULL;
@@ -496,7 +496,7 @@ static void sprd_ispint_fmcu_config_done(enum isp_id idx, void *isp_handle)
 	memset(&frame, 0x00, sizeof(frame));
 	memset(&capture_param, 0x00, sizeof(capture_param));
 
-	id = idx;
+	id = (enum dcam_id)idx;
 	dev = (struct isp_pipe_dev *)isp_handle;
 
 	fmcu_slice = &dev->fmcu_slice;

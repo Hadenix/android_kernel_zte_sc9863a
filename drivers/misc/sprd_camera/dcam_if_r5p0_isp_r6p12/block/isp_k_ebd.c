@@ -35,7 +35,7 @@ int isp_k_cfg_ebd(struct isp_io_param *param,
 {
 	int ret = 0;
 	enum isp_id idx;
-	enum dcam_id id = ISP_ID_0;
+	enum dcam_id id = (enum dcam_id)ISP_ID_0;
 
 	if (!param) {
 		pr_err("fail to get param\n");
