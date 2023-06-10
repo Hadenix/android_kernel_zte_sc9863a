@@ -214,7 +214,7 @@ static int sprd_ispdrv_reset(uint32_t idx)
 {
 	uint32_t flag = 0, time_out = 0;
 	enum isp_id id = ISP_ID_0;
-	enum dcam_drv_rtn rtn = ISP_RTN_SUCCESS;
+	enum dcam_drv_rtn rtn = DCAM_RTN_SUCCESS;
 
 	id = ISP_GET_ISP_ID(idx);
 
@@ -2668,7 +2668,7 @@ int sprd_isp_drv_path_cfg_set(void *isp_handle,
 			rtn = sprd_cam_buf_sg_table_get(&frame.buf_info);
 			if (rtn) {
 				pr_err("fail to config output addr!\n");
-				rtn = DCAM_RTN_PATH_ADDR_ERR;
+				rtn = ISP_RTN_PATH_ADDR_ERR;
 				break;
 			}
 
@@ -2716,7 +2716,7 @@ int sprd_isp_drv_path_cfg_set(void *isp_handle,
 			rtn = sprd_cam_buf_sg_table_get(&frame->buf_info);
 			if (rtn) {
 				pr_err("fail to cfg reserved output addr!\n");
-				rtn = DCAM_RTN_PATH_ADDR_ERR;
+				rtn = ISP_RTN_PATH_ADDR_ERR;
 				break;
 			}
 			pr_debug("isp%d path%d, y=0x%x u=0x%x v=0x%x mfd=0x%x 0x%x\n",
