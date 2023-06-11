@@ -303,7 +303,7 @@ static int sbuf_thread(void *data)
 			switch (mrecv.flag) {
 			case SMSG_EVENT_SBUF_RDPTR:
 				wake_up_interruptible_all(&ring->txwait);
-				if (ring->handler)
+				if (ring->handler) {
 					ring->handler(SBUF_NOTIFY_WRITE,
 						      ring->data);
 
@@ -312,10 +312,11 @@ static int sbuf_thread(void *data)
 					ring->tx_wakelock_state = 1;
 					pr_debug("sbuf %s : wake_lock hz/2!\n",
 						 ring->tx_wakelock_name);
+				}
 				break;
 			case SMSG_EVENT_SBUF_WRPTR:
 				wake_up_interruptible_all(&ring->rxwait);
-				if (ring->handler)
+				if (ring->handler) {
 					ring->handler(SBUF_NOTIFY_READ,
 						      ring->data);
 
@@ -324,7 +325,7 @@ static int sbuf_thread(void *data)
 					ring->rx_wakelock_state = 1;
 					pr_debug("sbuf %s : wake_lock hz/2!\n",
 						 ring->rx_wakelock_name);
-
+				}
 				break;
 			default:
 				rval = 1;
