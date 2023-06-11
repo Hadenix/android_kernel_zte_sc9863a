@@ -283,9 +283,10 @@ static u32 dpu_isr(struct dispc_context *ctx)
 	/*dpu vsync isr */
 	if (reg_val & DISPC_INT_DPI_VSYNC_MASK) {
 		/*write back feature*/
-		if (vsync_count == max_vsync_count && wb_en)
+		if (vsync_count == max_vsync_count && wb_en) {
 			dpu_write_back(ctx, true);
 			vsync_count++;
+		}
 	}
 
 	/* dpu stop done isr */
