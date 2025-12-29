@@ -2398,7 +2398,7 @@ sub process {
 							      $id, $orig_desc);
 
 			if ($short || $long || $space || $case || ($orig_desc ne $description) || !$hasparens) {
-				ERROR("GIT_COMMIT_ID",
+				WARN("GIT_COMMIT_ID",
 				      "Please use git commit description style 'commit <12+ chars of sha1> (\"<title line>\")' - ie: '${init_char}ommit $id (\"$description\")'\n" . $herecurr);
 			}
 		}
