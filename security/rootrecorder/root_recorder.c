@@ -169,7 +169,7 @@ static void find_miscdata(struct block_device *bdev, void *arg)
 	if (disk != NULL) {
 		disk_part_iter_init(&piter, disk, 0);
 		while ((part = disk_part_iter_next(&piter))) {
-			if (part->info->volname && (0 == strncmp("miscdata",
+			if (part->info->volname[0] != '\0' && (0 == strncmp("miscdata",
 				part->info->volname, 8))) {
 				*(char **)arg = (char *)(part->__dev.kobj.name);
 				break;
