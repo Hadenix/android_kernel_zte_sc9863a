@@ -51,6 +51,14 @@ compatible (optional) - standard definition
           used as a shared pool of DMA buffers for a set of devices. It can
           be used by an operating system to instanciate the necessary pool
           management subsystem if necessary.
+        - detour-mem: This indicates a region of memory meant to be
+          reserved first and put back to the buddy-system later.This can be
+	  reused by the userspace processesi(MIGRATE_MOVABLE).The base
+	  address should be aligned  with pageblock.And it should be noted
+	  that DetourFree may be incorrect when the pageblocks where detour-mem
+	  are belonged to have some memory which is neither a detour-mem nor
+	  the other reserved-mem.Detour-mem can be overlapped with other
+	  reserved-mem.
         - vendor specific string in the form <vendor>,[<device>-]<usage>
 no-map (optional) - empty property
     - Indicates the operating system must not create a virtual mapping

@@ -5,7 +5,7 @@ Interrupt chips
 
   Required properties:
   --------------------
-     compatible = "intel,ce4100-ioapic";
+     compatible = "intel,x86-ioapic";
      #interrupt-cells = <2>;
 
   Device's interrupt property:
@@ -23,4 +23,4 @@ Interrupt chips
 * Local APIC
   Required property:
 
-     compatible = "intel,ce4100-lapic";
+     compatible = "intel,x86-lapic";

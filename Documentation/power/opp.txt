@@ -128,6 +128,17 @@ dev_pm_opp_add - Add a new OPP for a specific domain represented by the device p
 		/* Do remaining things */
 	 }
 
+dev_pm_opp_add_undynamic - it is similar to dev_pm_opp_add,but OPP table is created from
+	static DEVICE TREE, so if there is only one device on dev_opp->dev_list,
+	OPP table will be removed by void dev_pm_opp_of_remove_table(struct device *dev)
+
+	WARNING: Do not use this function in interrupt context.
+
+	Example:
+	 add opp table by dev_pm_opp_add_undynamic(dev, freq, volt);
+	 remove opp table by dev_pm_opp_of_remove_table(cpu_dev);
+
+
 3. OPP Search Functions
 =======================
 High level framework such as cpufreq operates on frequencies. To map the

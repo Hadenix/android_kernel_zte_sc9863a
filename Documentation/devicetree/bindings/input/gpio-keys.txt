@@ -6,6 +6,8 @@ Required properties:
 Optional properties:
 	- autorepeat: Boolean, Enable auto repeat feature of Linux input
 	  subsystem.
+	- input-name: Descriptive name of this input device registered to
+	  the input core.
 
 Each button (key) is represented as a sub-node of "gpio-keys":
 Subnode properties:
@@ -28,6 +30,9 @@ Optional subnode-properties:
 	- linux,can-disable: Boolean, indicates that button is connected
 	  to dedicated (not shared) interrupt which can be disabled to
 	  suppress events from the button.
+	- gpio-key,level-trigger: Boolean, set this button's interrupt flag
+	  to level trigger. If not specified defaults to false, button's
+	  interrupt flag defaults to edge trigger.
 
 Example nodes:
 
@@ -40,6 +45,7 @@ Example nodes:
 				label = "GPIO Key UP";
 				linux,code = <103>;
 				gpios = <&gpio1 0 1>;
+				gpio-key,level-trigger;
 			};
 			button@22 {
 				label = "GPIO Key DOWN";
