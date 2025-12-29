@@ -179,7 +179,7 @@ retry:
 	if (likely(atomic_inc_not_zero(&huge_zero_refcount)))
 		return READ_ONCE(huge_zero_page);
 
-	zero_page = alloc_pages((GFP_TRANSHUGE | __GFP_ZERO) & ~__GFP_MOVABLE,
+	zero_page = alloc_pages_dont_record((GFP_TRANSHUGE | __GFP_ZERO) & ~__GFP_MOVABLE,
 			HPAGE_PMD_ORDER);
 	if (!zero_page) {
 		count_vm_event(THP_ZERO_PAGE_ALLOC_FAILED);
@@ -189,7 +189,7 @@ retry:
 	preempt_disable();
 	if (cmpxchg(&huge_zero_page, NULL, zero_page)) {
 		preempt_enable();
-		__free_pages(zero_page, compound_order(zero_page));
+		__free_pages_dont_record(zero_page, compound_order(zero_page));
 		goto retry;
 	}
 
@@ -221,7 +221,7 @@ static unsigned long shrink_huge_zero_page_scan(struct shrinker *shrink,
 	if (atomic_cmpxchg(&huge_zero_refcount, 1, 0) == 1) {
 		struct page *zero_page = xchg(&huge_zero_page, NULL);
 		BUG_ON(zero_page == NULL);
-		__free_pages(zero_page, compound_order(zero_page));
+		__free_pages_dont_record(zero_page, compound_order(zero_page));
 		return HPAGE_PMD_NR;
 	}
 
@@ -2484,7 +2484,7 @@ static int khugepaged_find_target_node(void)
 
 static inline struct page *alloc_hugepage(int defrag)
 {
-	return alloc_pages(alloc_hugepage_gfpmask(defrag, 0),
+	return alloc_pages_dont_record(alloc_hugepage_gfpmask(defrag, 0),
 			   HPAGE_PMD_ORDER);
 }
 

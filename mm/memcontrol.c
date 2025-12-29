@@ -4009,6 +4009,70 @@ out_kfree:
 	return ret;
 }
 
+static int memory_protect_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+
+	unsigned long protect = READ_ONCE(memcg->protect);
+
+	seq_printf(m, "%llu\n", (u64)protect * PAGE_SIZE);
+
+	return 0;
+}
+
+static ssize_t memory_protect_write(struct kernfs_open_file *of,
+		char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	unsigned long protect;
+	int err;
+
+	buf = strstrip(buf);
+	err = page_counter_memparse(buf, "max", &protect);
+	if (err)
+		return err;
+
+	memcg->protect = protect;
+
+	return nbytes;
+}
+
+bool memory_under_protect(struct mem_cgroup *root, struct mem_cgroup *memcg)
+{
+	if (mem_cgroup_disabled())
+		return false;
+
+	if (memcg == root_mem_cgroup)
+		return false;
+
+	if (page_counter_read(&(memcg->memory)) >= memcg->protect)
+		return false;
+
+	while (memcg != root) {
+		memcg = parent_mem_cgroup(memcg);
+
+		if (!memcg)
+			break;
+
+		if (memcg == root_mem_cgroup)
+			break;
+
+		if (page_counter_read(&memcg->memory) >= memcg->protect)
+			return false;
+	}
+	return true;
+}
+
+static int protect_hit_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+
+	seq_printf(m, "protect hint %lu\n",
+			mem_cgroup_read_events(memcg, MEMCG_PROTECT));
+
+	return 0;
+}
+
 static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "usage_in_bytes",
@@ -4116,6 +4180,17 @@ static struct cftype mem_cgroup_legacy_files[] = {
 	},
 #endif
 #endif
+	{
+	    .name = "protect",
+	    .flags = CFTYPE_NOT_ON_ROOT,
+	    .seq_show = memory_protect_show,
+	    .write = memory_protect_write,
+	},
+	{
+	    .name = "protect_hit",
+	    .flags = CFTYPE_NOT_ON_ROOT,
+	    .seq_show = protect_hit_show,
+	},
 	{ },	/* terminate */
 };
 
@@ -4462,6 +4537,7 @@ static void mem_cgroup_css_reset(struct cgroup_subsys_state *css)
 	memcg->low = 0;
 	memcg->high = PAGE_COUNTER_MAX;
 	memcg->soft_limit = PAGE_COUNTER_MAX;
+	memcg->protect = 0;
 	memcg_wb_domain_size_changed(memcg);
 }
 

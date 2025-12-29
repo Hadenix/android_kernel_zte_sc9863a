@@ -47,7 +47,7 @@ static unsigned long release_freepages(struct list_head *freelist)
 	list_for_each_entry_safe(page, next, freelist, lru) {
 		unsigned long pfn = page_to_pfn(page);
 		list_del(&page->lru);
-		__free_page(page);
+		__free_page_dont_record(page);
 		if (pfn > high_pfn)
 			high_pfn = pfn;
 	}
@@ -68,7 +68,8 @@ static void map_pages(struct list_head *list)
 
 static inline bool migrate_async_suitable(int migratetype)
 {
-	return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE;
+	return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE ||
+		is_migrate_detour(migratetype);
 }
 
 /*
@@ -115,6 +116,44 @@ static struct page *pageblock_pfn_to_page(unsigned long start_pfn,
 }
 
 #ifdef CONFIG_COMPACTION
+
+int PageMovable(struct page *page)
+{
+	struct address_space *mapping;
+
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
+	if (!__PageMovable(page))
+		return 0;
+
+	mapping = page_mapping(page);
+	if (mapping && mapping->a_ops && mapping->a_ops->isolate_page)
+		return 1;
+
+	return 0;
+}
+EXPORT_SYMBOL(PageMovable);
+
+void __SetPageMovable(struct page *page, struct address_space *mapping)
+{
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
+	VM_BUG_ON_PAGE((unsigned long)mapping & PAGE_MAPPING_MOVABLE, page);
+	page->mapping = (void *)((unsigned long)mapping | PAGE_MAPPING_MOVABLE);
+}
+EXPORT_SYMBOL(__SetPageMovable);
+
+void __ClearPageMovable(struct page *page)
+{
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
+	VM_BUG_ON_PAGE(!PageMovable(page), page);
+	/*
+	 * Clear registered address_space val with keeping PAGE_MAPPING_MOVABLE
+	 * flag so that VM can catch up released page by driver after isolation.
+	 * With it, VM migration doesn't try to put it back.
+	 */
+	page->mapping = (void *)((unsigned long)page->mapping &
+				PAGE_MAPPING_MOVABLE);
+}
+EXPORT_SYMBOL(__ClearPageMovable);
 
 /* Do not skip compaction more than 64 times */
 #define COMPACT_MAX_DEFER_SHIFT 6
@@ -699,7 +738,6 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 
 	/* Time to isolate some pages for migration */
 	for (; low_pfn < end_pfn; low_pfn++) {
-		bool is_lru;
 
 		/*
 		 * Periodically drop the lock (if held) regardless of its
@@ -740,21 +778,6 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		}
 
 		/*
-		 * Check may be lockless but that's ok as we recheck later.
-		 * It's possible to migrate LRU pages and balloon pages
-		 * Skip any other type of page
-		 */
-		is_lru = PageLRU(page);
-		if (!is_lru) {
-			if (unlikely(balloon_page_movable(page))) {
-				if (balloon_page_isolate(page)) {
-					/* Successfully isolated */
-					goto isolate_success;
-				}
-			}
-		}
-
-		/*
 		 * Regardless of being on LRU, compound pages such as THP and
 		 * hugetlbfs are not to be compacted. We can potentially save
 		 * a lot of iterations if we skip them at once. The check is
@@ -770,8 +793,30 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 			continue;
 		}
 
-		if (!is_lru)
+		/*
+		 * Check may be lockless but that's ok as we recheck later.
+		 * It's possible to migrate LRU and non-lru movable pages.
+		 * Skip any other type of page
+		 */
+		if (!PageLRU(page)) {
+			/*
+			 * __PageMovable can return false positive so we need
+			 * to verify it under page_lock.
+			 */
+			if (unlikely(__PageMovable(page)) &&
+					!PageIsolated(page)) {
+				if (locked) {
+					spin_unlock_irqrestore(&zone->lru_lock,
+									flags);
+					locked = false;
+				}
+
+				if (isolate_movable_page(page, isolate_mode))
+					goto isolate_success;
+			}
+
 			continue;
+		}
 
 		/*
 		 * Migration will fail if an anonymous page is pinned in memory,
@@ -1251,6 +1296,12 @@ static int __compact_finished(struct zone *zone, struct compact_control *cc,
 		/* MIGRATE_MOVABLE can fallback on MIGRATE_CMA */
 		if (migratetype == MIGRATE_MOVABLE &&
 			!list_empty(&area->free_list[MIGRATE_CMA]))
+			return COMPACT_PARTIAL;
+#endif
+#ifdef CONFIG_DETOUR_MEM
+		/* MIGRATE_MOVABLE can fallback on MIGRATE_DETOUR */
+		if (migratetype == MIGRATE_MOVABLE &&
+			!list_empty(&area->free_list[MIGRATE_DETOUR]))
 			return COMPACT_PARTIAL;
 #endif
 		/*

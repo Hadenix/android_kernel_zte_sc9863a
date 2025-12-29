@@ -310,10 +310,8 @@ static inline void mlock_migrate_page(struct page *newpage, struct page *page)
 
 extern pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma);
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
 extern unsigned long vma_address(struct page *page,
 				 struct vm_area_struct *vma);
-#endif
 #else /* !CONFIG_MMU */
 static inline void clear_page_mlock(struct page *page) { }
 static inline void mlock_vma_page(struct page *page) { }
@@ -430,6 +428,9 @@ extern unsigned long vm_mmap_pgoff(struct file *, unsigned long,
         unsigned long, unsigned long);
 
 extern void set_pageblock_order(void);
+
+extern int get_rtcc_status(void);
+
 unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 					    struct list_head *page_list);
 /* The ALLOC_WMARK bits are used as an index to zone->watermark */
@@ -446,6 +447,7 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_CPUSET		0x40 /* check for correct cpuset */
 #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
 #define ALLOC_FAIR		0x100 /* fair zone allocation */
+#define ALLOC_DETOUR		0x200 /* alloc allocations from detour-mem */
 
 enum ttu_flags;
 struct tlbflush_unmap_batch;
@@ -465,4 +467,7 @@ static inline void flush_tlb_batched_pending(struct mm_struct *mm)
 {
 }
 #endif /* CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH */
+
+extern bool is_rtcc_work(void);
+
 #endif	/* __MM_INTERNAL_H */

@@ -344,6 +344,52 @@ static void __insert_vmap_area(struct vmap_area *va)
 
 static void purge_vmap_area_lazy(void);
 
+#ifdef CONFIG_E_SHOW_MEM
+void print_vmalloc_address_info(void)
+{
+	struct vmap_area *va;
+	struct vm_struct *v;
+
+	list_for_each_entry(va, &vmap_area_list, list) {
+		if (!(va->flags & VM_VM_AREA)) {
+			printk("0x%p-0x%p %7ld vm_map_ram\n",
+				(void *)va->va_start, (void *)va->va_end,
+				va->va_end - va->va_start);
+			continue;
+		}
+
+		v = va->vm;
+
+		printk("0x%p-0x%p %7ld",
+			v->addr, v->addr + v->size, v->size);
+		if (v->caller)
+			printk(" %pS", v->caller);
+
+		if (v->nr_pages)
+			printk(" pages=%d", v->nr_pages);
+
+		if (v->phys_addr)
+			printk(" phys=%llx",
+			(unsigned long long)v->phys_addr);
+
+		if (v->flags & VM_IOREMAP)
+			printk(" ioremap\n");
+
+		if (v->flags & VM_ALLOC)
+			printk(" vmalloc\n");
+
+		if (v->flags & VM_MAP)
+			printk(" vmap\n");
+
+		if (v->flags & VM_USERMAP)
+			printk(" user\n");
+
+		if (v->flags & VM_VPAGES)
+			printk(" vpages\n");
+	}
+}
+#endif
+
 /*
  * Allocate a region of KVA of the specified size and alignment, within the
  * vstart and vend.
@@ -472,7 +518,13 @@ overflow:
 	if (printk_ratelimit())
 		pr_warn("vmap allocation for size %lu failed: use vmalloc=<size> to increase size\n",
 			size);
+
+#ifdef CONFIG_E_SHOW_MEM
+	print_vmalloc_address_info();
+#endif
+
 	kfree(va);
+
 	return ERR_PTR(-EBUSY);
 }
 
@@ -1287,7 +1339,12 @@ void unmap_kernel_range(unsigned long addr, unsigned long size)
 
 	flush_cache_vunmap(addr, end);
 	vunmap_page_range(addr, end);
+#ifdef CONFIG_X86_C6_TLB_IPI_OPT
+	/* Flush at no c6 cores, optimise for ISOC project */
+	flush_tlb_kernel_range_c6_noflush(addr, end);
+#else
 	flush_tlb_kernel_range(addr, end);
+#endif
 }
 EXPORT_SYMBOL_GPL(unmap_kernel_range);
 
@@ -1478,7 +1535,7 @@ static void __vunmap(const void *addr, int deallocate_pages)
 			struct page *page = area->pages[i];
 
 			BUG_ON(!page);
-			__free_page(page);
+			__free_page_dont_record(page);
 		}
 
 		if (area->flags & VM_VPAGES)
@@ -1609,7 +1666,7 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		struct page *page;
 
 		if (node == NUMA_NO_NODE)
-			page = alloc_page(alloc_mask);
+			page = alloc_page_dont_record(alloc_mask);
 		else
 			page = alloc_pages_node(node, alloc_mask, order);
 
@@ -2552,6 +2609,77 @@ void pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
 }
 #endif	/* CONFIG_SMP */
 
+#ifdef CONFIG_E_SHOW_MEM
+void print_vmalloc_info(enum e_show_mem_type type)
+{
+	struct vmap_area *va;
+	struct vm_struct *v;
+	unsigned long total_pages = 0;
+
+	printk("Detail:\n");
+	spin_lock(&vmap_area_lock);
+
+	if (list_empty(&vmap_area_list))
+		goto out;
+
+
+	list_for_each_entry(va, &vmap_area_list, list) {
+		if (va->flags & (VM_LAZY_FREE | VM_LAZY_FREEING))
+			continue;
+		if (!(va->flags & VM_VM_AREA))
+			continue;
+
+		v = va->vm;
+		if (v->nr_pages) {
+			total_pages += v->nr_pages;
+			if (E_SHOW_MEM_BASIC == type) {
+				/* 1M Bytes */
+				if ((v->nr_pages << (PAGE_SHIFT - 10)) < 1024)
+					continue;
+			} else if (E_SHOW_MEM_CLASSIC == type) {
+				/* 512K Bytes */
+				if ((v->nr_pages << (PAGE_SHIFT - 10)) < 512)
+					continue;
+			} else {
+				/* 128K Bytes */
+				if ((v->nr_pages << (PAGE_SHIFT - 10)) < 128)
+					continue;
+			}
+			printk("0x%p-0x%p %7ld",
+				v->addr, v->addr + v->size, v->size);
+			if (v->caller)
+				printk(" %pS", v->caller);
+			if (v->nr_pages)
+				printk(" %lukB",
+				  (unsigned long)(v->nr_pages
+				  << (PAGE_SHIFT - 10)));
+			if (v->flags & VM_ALLOC)
+				printk(" vmalloc\n");
+		}
+	}
+	printk("Total used:%lukB\n",
+		(unsigned long)(total_pages << (PAGE_SHIFT - 10)));
+
+out:
+	spin_unlock(&vmap_area_lock);
+}
+
+static int vmalloc_e_show_mem_handler(struct notifier_block *nb,
+			unsigned long val, void *data)
+{
+	enum e_show_mem_type type = val;
+	printk("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+	printk("Enhanced Mem-info :VMALLOC\n");
+	print_vmalloc_info(type);
+	return 0;
+}
+
+static struct notifier_block vmalloc_e_show_mem_notifier = {
+	.notifier_call = vmalloc_e_show_mem_handler,
+};
+
+#endif
+
 #ifdef CONFIG_PROC_FS
 static void *s_start(struct seq_file *m, loff_t *pos)
 	__acquires(&vmap_area_lock)
@@ -2623,8 +2751,14 @@ static int s_show(struct seq_file *m, void *p)
 	 * s_show can encounter race with remove_vm_area, !VM_VM_AREA on
 	 * behalf of vmap area is being tear down or vm_map_ram allocation.
 	 */
-	if (!(va->flags & VM_VM_AREA))
+	if (!(va->flags & VM_VM_AREA)) {
+		seq_printf(m, "0x%pK-0x%pK %7ld %s\n",
+			(void *)va->va_start, (void *)va->va_end,
+			va->va_end - va->va_start,
+			va->flags & VM_LAZY_FREE ? "unpurged vm_area" : "vm_map_ram");
+
 		return 0;
+	}
 
 	v = va->vm;
 
@@ -2686,9 +2820,11 @@ static const struct file_operations proc_vmalloc_operations = {
 static int __init proc_vmalloc_init(void)
 {
 	proc_create("vmallocinfo", S_IRUSR, NULL, &proc_vmalloc_operations);
+#ifdef CONFIG_E_SHOW_MEM
+	register_e_show_mem_notifier(&vmalloc_e_show_mem_notifier);
+#endif
 	return 0;
 }
 module_init(proc_vmalloc_init);
 
 #endif
-

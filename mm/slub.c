@@ -690,6 +690,7 @@ void object_err(struct kmem_cache *s, struct page *page,
 {
 	slab_bug(s, "%s", reason);
 	print_trailer(s, page, object);
+	panic("Slub overwriten in %s ", __func__);
 }
 
 static __printf(3, 4) void slab_err(struct kmem_cache *s, struct page *page,
@@ -703,6 +704,7 @@ static __printf(3, 4) void slab_err(struct kmem_cache *s, struct page *page,
 	va_end(args);
 	slab_bug(s, "%s", buf);
 	print_page_info(page);
+	panic("Slub overwriten in %s ", __func__);
 	dump_stack();
 }
 
@@ -750,6 +752,7 @@ static int check_bytes_and_report(struct kmem_cache *s, struct page *page,
 	pr_err("INFO: 0x%p-0x%p. First byte 0x%x instead of 0x%x\n",
 					fault, end - 1, fault[0], value);
 	print_trailer(s, page, object);
+	panic("Slub overwriten in %s ", __func__);
 
 	restore_bytes(s, what, value, fault, end);
 	return 0;
@@ -1431,7 +1434,7 @@ static inline struct page *alloc_slab_page(struct kmem_cache *s,
 	flags |= __GFP_NOTRACK;
 
 	if (node == NUMA_NO_NODE)
-		page = alloc_pages(flags, order);
+		page = alloc_pages_dont_record(flags, order);
 	else
 		page = __alloc_pages_node(node, flags, order);
 
@@ -4313,7 +4316,7 @@ struct loc_track {
 static void free_loc_track(struct loc_track *t)
 {
 	if (t->max)
-		free_pages((unsigned long)t->loc,
+		free_pages_dont_record((unsigned long)t->loc,
 			get_order(sizeof(struct location) * t->max));
 }
 
@@ -4324,7 +4327,7 @@ static int alloc_loc_track(struct loc_track *t, unsigned long max, gfp_t flags)
 
 	order = get_order(sizeof(struct location) * max);
 
-	l = (void *)__get_free_pages(flags, order);
+	l = (void *)__get_free_pages_dont_record(flags, order);
 	if (!l)
 		return 0;
 

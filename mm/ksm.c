@@ -541,8 +541,8 @@ static struct page *get_ksm_page(struct stable_node *stable_node, bool lock_it)
 	void *expected_mapping;
 	unsigned long kpfn;
 
-	expected_mapping = (void *)stable_node +
-				(PAGE_MAPPING_ANON | PAGE_MAPPING_KSM);
+	expected_mapping = (void *)((unsigned long)stable_node |
+					PAGE_MAPPING_KSM);
 again:
 	kpfn = READ_ONCE(stable_node->kpfn);
 	page = pfn_to_page(kpfn);
@@ -1955,6 +1955,10 @@ int rmap_walk_ksm(struct page *page, struct rmap_walk_control *rwc)
 
 	stable_node = page_stable_node(page);
 	if (!stable_node)
+		return ret;
+
+	/* return SWAP_AGAIN to avoid trageted reclaim of ksm pages */
+	if (rwc->target_vma)
 		return ret;
 again:
 	hlist_for_each_entry(rmap_item, &stable_node->hlist, hlist) {

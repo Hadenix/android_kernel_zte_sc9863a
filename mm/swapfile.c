@@ -2787,7 +2787,7 @@ int add_swap_count_continuation(swp_entry_t entry, gfp_t gfp_mask)
 	 * When debugging, it's easier to use __GFP_ZERO here; but it's better
 	 * for latency not to zero a page while GFP_ATOMIC and holding locks.
 	 */
-	page = alloc_page(gfp_mask | __GFP_HIGHMEM);
+	page = alloc_page_dont_record(gfp_mask | __GFP_HIGHMEM);
 
 	si = swap_info_get(entry);
 	if (!si) {
@@ -2863,7 +2863,7 @@ out:
 	spin_unlock(&si->lock);
 outer:
 	if (page)
-		__free_page(page);
+		__free_page_dont_record(page);
 	return 0;
 }
 
@@ -2969,7 +2969,7 @@ static void free_swap_count_continuations(struct swap_info_struct *si)
 				struct page *page;
 				page = list_entry(this, struct page, lru);
 				list_del(this);
-				__free_page(page);
+				__free_page_dont_record(page);
 			}
 		}
 	}

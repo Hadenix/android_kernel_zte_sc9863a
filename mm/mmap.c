@@ -295,6 +295,10 @@ static struct vm_area_struct *remove_vma(struct vm_area_struct *vma)
 
 static unsigned long do_brk(unsigned long addr, unsigned long len);
 
+#ifndef fail_it_after_dbt_syscall
+#define fail_it_after_dbt_syscall() do { } while (0)
+#endif
+
 SYSCALL_DEFINE1(brk, unsigned long, brk)
 {
 	unsigned long retval;
@@ -303,6 +307,8 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	struct vm_area_struct *next;
 	unsigned long min_brk;
 	bool populate;
+
+	fail_it_after_dbt_syscall();
 
 	down_write(&mm->mmap_sem);
 
@@ -1295,7 +1301,7 @@ static inline int mlock_future_check(struct mm_struct *mm,
 	}
 	return 0;
 }
-
+#if 0
 static inline u64 file_mmap_size_max(struct file *file, struct inode *inode)
 {
 	if (S_ISREG(inode->i_mode))
@@ -1324,7 +1330,7 @@ static inline bool file_mmap_ok(struct file *file, struct inode *inode,
 		return false;
 	return true;
 }
-
+#endif
 /*
  * The caller must hold down_write(&current->mm->mmap_sem).
  */
@@ -1390,8 +1396,10 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	if (file) {
 		struct inode *inode = file_inode(file);
 
+#if 0
 		if (!file_mmap_ok(file, inode, pgoff, len))
 			return -EOVERFLOW;
+#endif
 
 		switch (flags & MAP_TYPE) {
 		case MAP_SHARED:

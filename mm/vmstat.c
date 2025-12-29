@@ -764,6 +764,7 @@ const char * const vmstat_text[] = {
 	"workingset_nodereclaim",
 	"nr_anon_transparent_hugepages",
 	"nr_free_cma",
+	"nr_free_detour",
 
 	/* enum writeback_stat_item counters */
 	"nr_dirty_threshold",
@@ -932,6 +933,9 @@ static char * const migratetype_names[MIGRATE_TYPES] = {
 #endif
 #ifdef CONFIG_MEMORY_ISOLATION
 	"Isolate",
+#endif
+#ifdef CONFIG_DETOUR_MEM
+	"Detour",
 #endif
 };
 
@@ -1102,7 +1106,8 @@ static void pagetypeinfo_showmixedcount_print(struct seq_file *m,
 
 			page_mt = gfpflags_to_migratetype(page_ext->gfp_mask);
 			if (pageblock_mt != page_mt) {
-				if (is_migrate_cma(pageblock_mt))
+				if (is_migrate_cma(pageblock_mt) ||
+				    is_migrate_detour(pageblock_mt))
 					count[MIGRATE_MOVABLE]++;
 				else
 					count[pageblock_mt]++;
