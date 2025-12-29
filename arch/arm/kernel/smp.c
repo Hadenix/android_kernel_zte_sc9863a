@@ -27,6 +27,9 @@
 #include <linux/completion.h>
 #include <linux/cpufreq.h>
 #include <linux/irq_work.h>
+#ifdef CONFIG_TRUSTY
+#include <linux/irqdomain.h>
+#endif
 
 #include <linux/atomic.h>
 #include <asm/smp.h>
@@ -73,8 +76,20 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 	IPI_IRQ_WORK,
 	IPI_COMPLETION,
-	IPI_CPU_BACKTRACE = 15,
+	/*
+	 * CPU_BACKTRACE is special and not included in NR_IPI
+	 * or tracable with trace_ipi_*
+	 */
+	IPI_CPU_BACKTRACE,
+#ifdef CONFIG_TRUSTY
+	IPI_CUSTOM_FIRST,
+	IPI_CUSTOM_LAST = 15,
+#endif
 };
+
+#ifdef CONFIG_TRUSTY
+struct irq_domain *ipi_custom_irq_domain;
+#endif
 
 static DECLARE_COMPLETION(cpu_running);
 
@@ -373,7 +388,7 @@ asmlinkage void secondary_start_kernel(void)
 
 	cpu_init();
 
-	pr_debug("CPU%u: Booted secondary processor\n", cpu);
+	pr_info("CPU%u: Booted secondary processor\n", cpu);
 
 	preempt_disable();
 	trace_hardirqs_off();
@@ -563,6 +578,7 @@ static void ipi_cpu_stop(unsigned int cpu)
 	local_fiq_disable();
 	local_irq_disable();
 
+	flush_cache_all();
 	while (1)
 		cpu_relax();
 }
@@ -588,6 +604,9 @@ asmlinkage void __exception_irq_entry do_IPI(int ipinr, struct pt_regs *regs)
 	handle_IPI(ipinr, regs);
 }
 
+#ifdef CONFIG_SPRD_SYSDUMP
+		extern void sysdump_ipi(struct pt_regs *regs);
+#endif
 void handle_IPI(int ipinr, struct pt_regs *regs)
 {
 	unsigned int cpu = smp_processor_id();
@@ -628,6 +647,9 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	case IPI_CPU_STOP:
 		irq_enter();
+		#ifdef CONFIG_SPRD_SYSDUMP
+			sysdump_ipi(regs);
+		#endif
 		ipi_cpu_stop(cpu);
 		irq_exit();
 		break;
@@ -653,8 +675,17 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		break;
 
 	default:
-		pr_crit("CPU%u: Unknown IPI message 0x%x\n",
-		        cpu, ipinr);
+#ifdef CONFIG_TRUSTY
+		if (ipi_custom_irq_domain &&
+		    ipinr >= IPI_CUSTOM_FIRST && ipinr <= IPI_CUSTOM_LAST)
+			handle_domain_irq(ipi_custom_irq_domain, ipinr, regs);
+		else
+			pr_crit("CPU%u: Unknown IPI message 0x%x\n",
+				cpu, ipinr);
+#else
+		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
+
+#endif
 		break;
 	}
 
@@ -662,6 +693,86 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		trace_ipi_exit_rcuidle(ipi_types[ipinr]);
 	set_irq_regs(old_regs);
 }
+#ifdef CONFIG_TRUSTY
+static void custom_ipi_enable(struct irq_data *data)
+{
+	/*
+	 * Always trigger a new ipi on enable. This only works for clients
+	 * that then clear the ipi before unmasking interrupts.
+	 */
+	smp_cross_call(cpumask_of(smp_processor_id()), data->hwirq);
+}
+
+static void custom_ipi_disable(struct irq_data *data)
+{
+}
+
+static struct irq_chip custom_ipi_chip = {
+	.name			= "CustomIPI",
+	.irq_enable		= custom_ipi_enable,
+	.irq_disable		= custom_ipi_disable,
+};
+
+static void handle_custom_ipi_irq(struct irq_desc *desc)
+{
+	if (!desc->action) {
+		pr_crit("CPU%u: Unknown IPI message 0x%x, no custom handler\n",
+			smp_processor_id(), irq_desc_get_irq(desc));
+		return;
+	}
+
+	if (!cpumask_test_cpu(smp_processor_id(), desc->percpu_enabled))
+		return; /* IPIs may not be maskable in hardware */
+
+	handle_percpu_devid_irq(desc);
+}
+
+static int custom_ipi_domain_map(struct irq_domain *d, unsigned int irq,
+				 irq_hw_number_t hw)
+{
+	if (hw < IPI_CUSTOM_FIRST || hw > IPI_CUSTOM_LAST) {
+		pr_err("hwirq-%u is not in supported range for CustomIPI IRQ domain\n",
+		       (uint)hw);
+		return -EINVAL;
+	}
+
+	irq_set_percpu_devid(irq);
+	irq_set_chip_and_handler(irq, &custom_ipi_chip, handle_custom_ipi_irq);
+	irq_set_status_flags(irq, IRQ_NOAUTOEN);
+
+	return 0;
+}
+
+static const struct irq_domain_ops custom_ipi_domain_ops = {
+	.map = custom_ipi_domain_map,
+};
+
+static int __init smp_custom_ipi_init(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "android,CustomIPI");
+	if (np) {
+		/*
+		 * Register linear irq doman to cover the whole IPI range
+		 * even though we are only using part of it. Proper IRQ
+		 * range check will be done by an implementation of mapping
+		 * routine.
+		 */
+		pr_info("Initilizing CustomIPI irq domain\n");
+		ipi_custom_irq_domain =
+			irq_domain_add_linear(np,
+					      IPI_CUSTOM_LAST + 1,
+					      &custom_ipi_domain_ops,
+					      NULL);
+		WARN_ON(!ipi_custom_irq_domain);
+		return 0;
+	}
+
+	return 0;
+}
+core_initcall(smp_custom_ipi_init);
+#endif
 
 void smp_send_reschedule(int cpu)
 {
@@ -758,7 +869,7 @@ static void raise_nmi(cpumask_t *mask)
 	if (cpumask_test_cpu(smp_processor_id(), mask) && irqs_disabled())
 		nmi_cpu_backtrace(NULL);
 
-	smp_cross_call(mask, IPI_CPU_BACKTRACE);
+	__smp_cross_call(mask, IPI_CPU_BACKTRACE);
 }
 
 void arch_trigger_all_cpu_backtrace(bool include_self)

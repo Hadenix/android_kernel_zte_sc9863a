@@ -3,6 +3,7 @@
 #include <linux/string.h>
 #include <linux/seq_file.h>
 #include <linux/cpufreq.h>
+#include <linux/of_fdt.h>
 
 /*
  *	Get CPU information for use by the procfs.
@@ -56,6 +57,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 {
 	struct cpuinfo_x86 *c = v;
 	unsigned int cpu;
+	unsigned int last_cpu;
 	int i;
 
 	cpu = c->cpu_index;
@@ -87,8 +89,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	}
 
 	/* Cache size */
-	if (c->x86_cache_size)
-		seq_printf(m, "cache size\t: %u KB\n", c->x86_cache_size);
+	if (c->x86_cache_size >= 0)
+		seq_printf(m, "cache size\t: %d KB\n", c->x86_cache_size);
 
 	show_cpuinfo_core(m, c, cpu);
 	show_cpuinfo_misc(m, c);
@@ -131,6 +133,11 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 				seq_printf(m, " [%d]", i);
 		}
 	}
+
+	last_cpu = cpumask_last(cpu_online_mask);
+	if (last_cpu == cpu && of_flat_dt_get_cpuinfo_hw() != NULL)
+		seq_printf(m, "\n\nHardware\t: %s\n",
+				of_flat_dt_get_cpuinfo_hw());
 
 	seq_puts(m, "\n\n");
 

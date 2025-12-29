@@ -56,6 +56,8 @@ $(obj)/xipImage: FORCE
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)
 	@$(kecho) '  Kernel: $@ is ready'
+	@/usr/bin/size vmlinux
+	@/bin/grep module_layout Module.symvers || echo "NULL module_layout version!"
 
 $(obj)/compressed/vmlinux: $(obj)/Image FORCE
 	$(Q)$(MAKE) $(build)=$(obj)/compressed $@

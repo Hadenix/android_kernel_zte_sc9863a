@@ -980,12 +980,11 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 	int i;
 	int worst = 0;
 	int severity;
-
 	/*
 	 * Establish sequential order between the CPUs entering the machine
 	 * check handler.
 	 */
-	int order = -1;
+	int order;
 	/*
 	 * If no_way_out gets set, there is no safe way to recover from this
 	 * MCE.  If mca_cfg.tolerant is cranked up, we'll try anyway.
@@ -1001,12 +1000,12 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 	char *msg = "Unknown";
 	u64 recover_paddr = ~0ull;
 	int flags = MF_ACTION_REQUIRED;
+	int lmce = 0;
 
-	/*
-	 * MCEs are always local on AMD. Same is determined by MCG_STATUS_LMCES
-	 * on Intel.
-	 */
-	int lmce = 1;
+	printk(KERN_ERR"=============MCE================\n");
+	while (1) {
+
+	}
 
 	/* If this CPU is offline, just bail out. */
 	if (cpu_is_offline(smp_processor_id())) {
@@ -1045,23 +1044,17 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 		kill_it = 1;
 
 	/*
-	 * Check if this MCE is signaled to only this logical processor,
-	 * on Intel only.
+	 * Check if this MCE is signaled to only this logical processor
 	 */
-	if (m.cpuvendor == X86_VENDOR_INTEL)
-		lmce = m.mcgstatus & MCG_STATUS_LMCES;
-
-	/*
-	 * Local machine check may already know that we have to panic.
-	 * Broadcast machine check begins rendezvous in mce_start()
-	 * Go through all banks in exclusion of the other CPUs. This way we
-	 * don't report duplicated events on shared banks because the first one
-	 * to see it will clear it.
-	 */
-	if (lmce) {
-		if (no_way_out)
-			mce_panic("Fatal local machine check", &m, msg);
-	} else {
+	if (m.mcgstatus & MCG_STATUS_LMCES)
+		lmce = 1;
+	else {
+		/*
+		 * Go through all the banks in exclusion of the other CPUs.
+		 * This way we don't report duplicated events on shared banks
+		 * because the first one to see it will clear it.
+		 * If this is a Local MCE, then no need to perform rendezvous.
+		 */
 		order = mce_start(&no_way_out);
 	}
 
@@ -1140,17 +1133,12 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 			no_way_out = worst >= MCE_PANIC_SEVERITY;
 	} else {
 		/*
-		 * If there was a fatal machine check we should have
-		 * already called mce_panic earlier in this function.
-		 * Since we re-read the banks, we might have found
-		 * something new. Check again to see if we found a
-		 * fatal error. We call "mce_severity()" again to
-		 * make sure we have the right "msg".
+		 * Local MCE skipped calling mce_reign()
+		 * If we found a fatal error, we need to panic here.
 		 */
-		if (worst >= MCE_PANIC_SEVERITY && mca_cfg.tolerant < 3) {
-			mce_severity(&m, cfg->tolerant, &msg, true);
-			mce_panic("Local fatal machine check!", &m, msg);
-		}
+		 if (worst >= MCE_PANIC_SEVERITY && mca_cfg.tolerant < 3)
+			mce_panic("Machine check from unknown source",
+				NULL, NULL);
 	}
 
 	/*
@@ -1691,11 +1679,6 @@ static void unexpected_machine_check(struct pt_regs *regs, long error_code)
 /* Call the installed machine check handler for this CPU setup. */
 void (*machine_check_vector)(struct pt_regs *, long error_code) =
 						unexpected_machine_check;
-
-dotraplinkage void do_mce(struct pt_regs *regs, long error_code)
-{
-	machine_check_vector(regs, error_code);
-}
 
 /*
  * Called for each booted CPU to set up machine checks.
@@ -2294,6 +2277,9 @@ static ssize_t store_int_with_restart(struct device *s,
 	if (check_interval == old_check_interval)
 		return ret;
 
+	if (check_interval < 1)
+		check_interval = 1;
+
 	mutex_lock(&mce_sysfs_mutex);
 	mce_restart();
 	mutex_unlock(&mce_sysfs_mutex);
@@ -2337,6 +2323,11 @@ static cpumask_var_t mce_device_initialized;
 static void mce_device_release(struct device *dev)
 {
 	kfree(dev);
+}
+
+static inline struct device *get_mce_device(unsigned int cpu)
+{
+	return  per_cpu(mce_device, cpu);
 }
 
 /* Per cpu device init. All of the cpus still share the same ctrl bank: */
@@ -2455,6 +2446,7 @@ mce_cpu_callback(struct notifier_block *nfb, unsigned long action, void *hcpu)
 	case CPU_DEAD:
 		if (threshold_cpu_callback)
 			threshold_cpu_callback(action, cpu);
+		dev_set_uevent_suppress(get_mce_device(cpu), true);
 		mce_device_remove(cpu);
 		mce_intel_hcpu_update(cpu);
 

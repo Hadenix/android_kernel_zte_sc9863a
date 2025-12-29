@@ -56,6 +56,8 @@
 #include <asm/tsc.h>
 #include <asm/hypervisor.h>
 
+#include <asm/mv/mobilevisor.h>
+
 unsigned int num_processors;
 
 unsigned disabled_cpus;
@@ -321,7 +323,7 @@ static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 {
 	unsigned int lvtt_value, tmp_value;
 
-	lvtt_value = LOCAL_TIMER_VECTOR;
+	lvtt_value = x86_mv_map_vector(LOCAL_TIMER_VECTOR);
 	if (!oneshot)
 		lvtt_value |= APIC_LVT_TIMER_PERIODIC;
 	else if (boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER))
@@ -490,7 +492,6 @@ lapic_timer_set_periodic_oneshot(struct clock_event_device *evt, bool oneshot)
 	/* Lapic used as dummy for broadcast ? */
 	if (evt->features & CLOCK_EVT_FEAT_DUMMY)
 		return 0;
-
 	__setup_APIC_LVTT(lapic_timer_frequency, oneshot, 1);
 	return 0;
 }
@@ -1368,7 +1369,7 @@ void setup_local_APIC(void)
 	 * TODO: set up through-local-APIC from through-I/O-APIC? --macro
 	 */
 	value = apic_read(APIC_LVT0) & APIC_LVT_MASKED;
-	if (!cpu && (pic_mode || !value || skip_ioapic_setup)) {
+	if (!cpu && (pic_mode || !value)) {
 		value = APIC_DM_EXTINT;
 		apic_printk(APIC_VERBOSE, "enabled ExtINT on CPU#%d\n", cpu);
 	} else {
@@ -1404,7 +1405,8 @@ static void end_local_APIC_setup(void)
 		unsigned int value;
 		/* Disable the local apic timer */
 		value = apic_read(APIC_LVTT);
-		value |= (APIC_LVT_MASKED | LOCAL_TIMER_VECTOR);
+		value |= (APIC_LVT_MASKED |
+			x86_mv_map_vector(LOCAL_TIMER_VECTOR));
 		apic_write(APIC_LVTT, value);
 	}
 #endif
@@ -2396,7 +2398,7 @@ static void apic_pm_activate(void)
 static int __init init_lapic_sysfs(void)
 {
 	/* XXX: remove suspend/resume procs if !apic_pm_state.active? */
-	if (cpu_has_apic)
+	if (cpu_has_apic && !is_x86_mobilevisor())
 		register_syscore_ops(&lapic_syscore_ops);
 
 	return 0;

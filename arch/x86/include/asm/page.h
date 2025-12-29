@@ -65,6 +65,8 @@ static inline void copy_user_page(void *to, void *from, unsigned long vaddr,
 extern bool __virt_addr_valid(unsigned long kaddr);
 #define virt_addr_valid(kaddr)	__virt_addr_valid((unsigned long) (kaddr))
 
+#define phys_to_page(paddr)	pfn_to_page(__phys_to_pfn(paddr))
+
 #endif	/* __ASSEMBLY__ */
 
 #include <asm-generic/memory_model.h>

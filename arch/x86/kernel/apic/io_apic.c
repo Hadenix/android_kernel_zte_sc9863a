@@ -209,6 +209,20 @@ static int __init parse_noapic(char *str)
 }
 early_param("noapic", parse_noapic);
 
+unsigned int irq_affinity = APIC_ALL_CPUS;
+static int __init parse_irq_affinity(char *arg)
+{
+	if (!arg)
+		return -EINVAL;
+
+	irq_affinity = simple_strtoul(arg, NULL, 0);
+	apic_printk(APIC_QUIET, KERN_INFO "Force irq affinity %x\n",
+			irq_affinity);
+	return 0;
+}
+/* Force to set irq affinity like "irq_affinity=0xf" */
+early_param("irq_affinity", parse_irq_affinity);
+
 /* Will be called in mpparse/acpi/sfi codes for saving IRQ info */
 void mp_save_irq(struct mpc_intsrc *m)
 {
@@ -651,6 +665,13 @@ int save_ioapic_entries(void)
 			ioapics[apic].saved_registers[pin] =
 				ioapic_read_entry(apic, pin);
 	}
+
+	/*
+	* Mask ioapic entries here to avoid interrupts going to
+	* LAPIC when disabled, restore_ioapic will make sure all
+	* its returned back to current state.
+	*/
+	mask_ioapic_entries();
 
 	return err;
 }
@@ -2592,8 +2613,8 @@ static struct resource * __init ioapic_setup_resources(void)
 		res[num].flags = IORESOURCE_MEM | IORESOURCE_BUSY;
 		snprintf(mem, IOAPIC_RESOURCE_NAME_SIZE, "IOAPIC %u", i);
 		mem += IOAPIC_RESOURCE_NAME_SIZE;
-		ioapics[i].iomem_res = &res[num];
 		num++;
+		ioapics[i].iomem_res = res;
 	}
 
 	ioapic_resources = res;

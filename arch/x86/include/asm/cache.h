@@ -20,4 +20,10 @@
 #endif
 #endif
 
+#ifdef CONFIG_X86_DMA_INCOHERENT
+#define ARCH_DMA_MINALIGN	L1_CACHE_BYTES
+#define ARCH_SLAB_MINALIGN	8
+#endif
+
+
 #endif /* _ASM_X86_CACHE_H */

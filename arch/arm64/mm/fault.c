@@ -41,6 +41,10 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+#include <linux/boost_sigkill_free.h>
+#endif
+
 static const char *fault_name(unsigned int esr);
 
 /*
@@ -216,6 +220,15 @@ static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 {
 	struct vm_area_struct *vma;
 	int fault;
+
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+	if (unlikely(test_bit(MMF_FAST_FREEING, &mm->flags))) {
+		task_clear_jobctl_pending(tsk, JOBCTL_PENDING_MASK);
+		sigaddset(&tsk->pending.signal, SIGKILL);
+		set_tsk_thread_flag(tsk, TIF_SIGPENDING);
+		return VM_FAULT_BADMAP;
+	}
+#endif
 
 	vma = find_vma(mm, addr);
 	fault = VM_FAULT_BADMAP;
@@ -463,6 +476,23 @@ static int do_bad(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 	return 1;
 }
 
+#ifdef CONFIG_SPRD_WHALE2_ISP_REGISTER_ACCESS_RETRY
+/*
+ * This workround whale2 ISP(ARC) access register bug.
+ */
+int in_altek_isp_ahb_range(unsigned long addr);
+static int do_whale2isp_fault(unsigned long addr, unsigned int esr,
+			      struct pt_regs *regs)
+{
+	if (in_altek_isp_ahb_range(addr)) {
+		pr_alert ("whale2 ISP Unhandled fault:(0x%08x) at 0x%016lx\n",
+			   esr, addr);
+		return 0;
+	} else
+		return 1;
+}
+#endif
+
 static const struct fault_info {
 	int	(*fn)(unsigned long addr, unsigned int esr, struct pt_regs *regs);
 	int	sig;
@@ -485,7 +515,11 @@ static const struct fault_info {
 	{ do_page_fault,	SIGSEGV, SEGV_ACCERR,	"level 1 permission fault"	},
 	{ do_page_fault,	SIGSEGV, SEGV_ACCERR,	"level 2 permission fault"	},
 	{ do_page_fault,	SIGSEGV, SEGV_ACCERR,	"level 3 permission fault"	},
+#ifdef CONFIG_SPRD_WHALE2_ISP_REGISTER_ACCESS_RETRY
+	{ do_whale2isp_fault,	SIGBUS,  0,		"synchronous external abort"	},
+#else
 	{ do_bad,		SIGBUS,  0,		"synchronous external abort"	},
+#endif
 	{ do_bad,		SIGBUS,  0,		"unknown 17"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 18"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 19"			},
@@ -623,20 +657,33 @@ asmlinkage int __exception do_debug_exception(unsigned long addr,
 {
 	const struct fault_info *inf = debug_fault_info + DBG_ESR_EVT(esr);
 	struct siginfo info;
+	int rv;
 
-	if (!inf->fn(addr, esr, regs))
-		return 1;
+	/*
+	 * Tell lockdep we disabled irqs in entry.S. Do nothing if they were
+	 * already disabled to preserve the last enabled/disabled addresses.
+	 */
+	if (interrupts_enabled(regs))
+		trace_hardirqs_off();
 
-	pr_alert("Unhandled debug exception: %s (0x%08x) at 0x%016lx\n",
-		 inf->name, esr, addr);
+	if (!inf->fn(addr, esr, regs)) {
+		rv = 1;
+	} else {
+		pr_alert("Unhandled debug exception: %s (0x%08x) at 0x%016lx\n",
+			 inf->name, esr, addr);
 
-	info.si_signo = inf->sig;
-	info.si_errno = 0;
-	info.si_code  = inf->code;
-	info.si_addr  = (void __user *)addr;
-	arm64_notify_die("", regs, &info, 0);
+		info.si_signo = inf->sig;
+		info.si_errno = 0;
+		info.si_code  = inf->code;
+		info.si_addr  = (void __user *)addr;
+		arm64_notify_die("", regs, &info, 0);
+		rv = 0;
+	}
 
-	return 0;
+	if (interrupts_enabled(regs))
+		trace_hardirqs_on();
+
+	return rv;
 }
 
 #ifdef CONFIG_ARM64_PAN

@@ -8,7 +8,7 @@
  * Interrupt control:
  */
 
-extern inline unsigned long native_save_fl(void)
+static inline unsigned long native_save_fl(void)
 {
 	unsigned long flags;
 

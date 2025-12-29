@@ -747,6 +747,12 @@ extern int kern_addr_valid(unsigned long addr);
 
 #include <asm-generic/pgtable.h>
 
+/*
+ * We provide our own arch_get_unmapped_area to cope with dbt guest request.
+ */
+#define HAVE_ARCH_UNMAPPED_AREA
+#define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
+
 void pgd_cache_init(void);
 #define pgtable_cache_init	pgd_cache_init
 

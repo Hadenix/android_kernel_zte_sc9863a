@@ -29,9 +29,14 @@
 #include <asm/cpu_ops.h>
 #include <asm/processor.h>
 #include <asm/sysreg.h>
+#include <linux/cpumask.h>
 
 unsigned long elf_hwcap __read_mostly;
 EXPORT_SYMBOL_GPL(elf_hwcap);
+
+#ifdef CONFIG_64BIT_ONLY_CPU
+	extern struct cpumask b64_only_cpu_mask;
+#endif
 
 #ifdef CONFIG_COMPAT
 #define COMPAT_ELF_HWCAP_DEFAULT	\
@@ -528,8 +533,17 @@ void update_cpu_features(int cpu,
 	 * memory are mapped within the minimum PARange of all CPUs.
 	 * Linux should not care about secure memory.
 	 */
+
+	/*
+	 * Sharklj1 has 6cores (2CA53 + 4Javalin), SETEND instruction
+	 * only support on CA53. So ignore Javalin.
+	 */
+#ifdef CONFIG_64BIT_ONLY_CPU
+	if (!cpumask_test_cpu(cpu, &b64_only_cpu_mask))
+#endif
 	taint |= check_update_ftr_reg(SYS_ID_AA64MMFR0_EL1, cpu,
 				      info->reg_id_aa64mmfr0, boot->reg_id_aa64mmfr0);
+
 	taint |= check_update_ftr_reg(SYS_ID_AA64MMFR1_EL1, cpu,
 				      info->reg_id_aa64mmfr1, boot->reg_id_aa64mmfr1);
 	taint |= check_update_ftr_reg(SYS_ID_AA64MMFR2_EL1, cpu,

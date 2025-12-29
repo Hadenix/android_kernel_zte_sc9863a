@@ -1,6 +1,9 @@
 /*
  * Architecture specific OF callbacks.
  */
+
+#define pr_fmt(fmt) "x86-of: " fmt
+
 #include <linux/bootmem.h>
 #include <linux/export.h>
 #include <linux/io.h>
@@ -11,7 +14,6 @@
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/of_irq.h>
-#include <linux/libfdt.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/of_pci.h>
@@ -23,6 +25,8 @@
 #include <asm/pci_x86.h>
 #include <asm/setup.h>
 #include <asm/i8259.h>
+
+#include <asm/mv/cpu.h>
 
 __initdata u64 initial_dtb;
 char __initdata cmd_line[COMMAND_LINE_SIZE];
@@ -48,25 +52,6 @@ void __init add_dtb(u64 data)
 {
 	initial_dtb = data + offsetof(struct setup_data, data);
 }
-
-/*
- * CE4100 ids. Will be moved to machine_device_initcall() once we have it.
- */
-static struct of_device_id __initdata ce4100_ids[] = {
-	{ .compatible = "intel,ce4100-cp", },
-	{ .compatible = "isa", },
-	{ .compatible = "pci", },
-	{},
-};
-
-static int __init add_bus_probe(void)
-{
-	if (!of_have_populated_dt())
-		return 0;
-
-	return of_platform_bus_probe(NULL, ce4100_ids, NULL);
-}
-device_initcall(add_bus_probe);
 
 #ifdef CONFIG_PCI
 struct device_node *pcibios_get_phb_of_node(struct pci_bus *bus)
@@ -124,7 +109,7 @@ static void __init dtb_setup_hpet(void)
 	struct resource r;
 	int ret;
 
-	dn = of_find_compatible_node(NULL, NULL, "intel,ce4100-hpet");
+	dn = of_find_compatible_node(NULL, NULL, "intel,x86-hpet");
 	if (!dn)
 		return;
 	ret = of_address_to_resource(dn, 0, &r);
@@ -143,7 +128,7 @@ static void __init dtb_lapic_setup(void)
 	struct resource r;
 	int ret;
 
-	dn = of_find_compatible_node(NULL, NULL, "intel,ce4100-lapic");
+	dn = of_find_compatible_node(NULL, NULL, "intel,x86-lapic");
 	if (!dn)
 		return;
 
@@ -151,16 +136,56 @@ static void __init dtb_lapic_setup(void)
 	if (WARN_ON(ret))
 		return;
 
+#ifdef CONFIG_X86_32
 	/* Did the boot loader setup the local APIC ? */
 	if (!cpu_has_apic) {
 		if (apic_force_enable(r.start))
 			return;
 	}
-	smp_found_config = 1;
-	pic_mode = 1;
+#endif
+
 	register_lapic_address(r.start);
-	generic_processor_info(boot_cpu_physical_apicid,
-			       GET_APIC_VERSION(apic_read(APIC_LVR)));
+#endif
+}
+
+static void __init dtb_cpus_setup(void)
+{
+#ifdef CONFIG_X86_LOCAL_APIC
+	unsigned apic_id;
+	struct device_node *cpu, *cpus;
+
+	cpus = of_find_node_by_path("/cpus");
+	if (!cpus) { /* UP configuration (one CPU) */
+		generic_processor_info(boot_cpu_physical_apicid,
+			GET_APIC_VERSION(apic_read(APIC_LVR)));
+		pr_info("no /cpus found from dtb\n");
+		return;
+	}
+
+	for_each_child_of_node(cpus, cpu) {
+		if (of_node_cmp(cpu->type, "cpu"))
+			continue;
+
+		if (of_property_read_u32(cpu, "reg", &apic_id)) {
+			pr_err("/cpus %s requires reg property\n",
+						cpu->full_name);
+			return;
+		}
+
+#ifdef CONFIG_MOBILEVISOR
+		if (mv_is_irq_bypass()) {
+			/* Pass the mapped apic id for irq bypass mode */
+			apic_id = mv_cpu_get_apicid(apic_id);
+			pr_debug("irq_bypass apicid = %x\n", apic_id);
+		}
+#endif
+
+		generic_processor_info(apic_id,
+			GET_APIC_VERSION(apic_read(APIC_LVR)));
+	}
+
+	if (num_processors > 1)
+		smp_found_config = 1;
 #endif
 }
 
@@ -178,44 +203,41 @@ static struct of_ioapic_type of_ioapic_type[] =
 	{
 		.out_type	= IRQ_TYPE_EDGE_RISING,
 		.trigger	= IOAPIC_EDGE,
-		.polarity	= 1,
+		.polarity	= 0,
 	},
 	{
 		.out_type	= IRQ_TYPE_LEVEL_LOW,
 		.trigger	= IOAPIC_LEVEL,
-		.polarity	= 0,
+		.polarity	= 1,
 	},
 	{
 		.out_type	= IRQ_TYPE_LEVEL_HIGH,
 		.trigger	= IOAPIC_LEVEL,
-		.polarity	= 1,
+		.polarity	= 0,
 	},
 	{
 		.out_type	= IRQ_TYPE_EDGE_FALLING,
 		.trigger	= IOAPIC_EDGE,
-		.polarity	= 0,
+		.polarity	= 1,
 	},
 };
 
 static int dt_irqdomain_alloc(struct irq_domain *domain, unsigned int virq,
 			      unsigned int nr_irqs, void *arg)
 {
-	struct irq_fwspec *fwspec = (struct irq_fwspec *)arg;
+	struct of_phandle_args *irq_data = (void *)arg;
 	struct of_ioapic_type *it;
 	struct irq_alloc_info tmp;
-	int type_index;
 
-	if (WARN_ON(fwspec->param_count < 2))
+	if (WARN_ON(irq_data->args_count < 2))
+		return -EINVAL;
+	if (irq_data->args[1] >= ARRAY_SIZE(of_ioapic_type))
 		return -EINVAL;
 
-	type_index = fwspec->param[1];
-	if (type_index >= ARRAY_SIZE(of_ioapic_type))
-		return -EINVAL;
-
-	it = &of_ioapic_type[type_index];
+	it = &of_ioapic_type[irq_data->args[1]];
 	ioapic_set_alloc_attr(&tmp, NUMA_NO_NODE, it->trigger, it->polarity);
 	tmp.ioapic_id = mpc_ioapic_id(mp_irqdomain_ioapic_idx(domain));
-	tmp.ioapic_pin = fwspec->param[0];
+	tmp.ioapic_pin = irq_data->args[0];
 
 	return mp_irqdomain_alloc(domain, virq, nr_irqs, &tmp);
 }
@@ -250,11 +272,12 @@ static void __init dtb_ioapic_setup(void)
 {
 	struct device_node *dn;
 
-	for_each_compatible_node(dn, NULL, "intel,ce4100-ioapic")
+	for_each_compatible_node(dn, NULL, "intel,x86-ioapic")
 		dtb_add_ioapic(dn);
 
 	if (nr_ioapics) {
 		of_ioapic = 1;
+		pic_mode = 0; /* pic mode must be 0 when ioapic is present */
 		return;
 	}
 	printk(KERN_ERR "Error: No information about IO-APIC in OF.\n");
@@ -269,40 +292,20 @@ static void __init dtb_apic_setup(void)
 	dtb_ioapic_setup();
 }
 
-#ifdef CONFIG_OF_FLATTREE
-static void __init x86_flattree_get_config(void)
+void __init x86_setup_dtb(void)
 {
-	u32 size, map_len;
-	void *dt;
-
-	if (!initial_dtb)
-		return;
-
-	map_len = max(PAGE_SIZE - (initial_dtb & ~PAGE_MASK), (u64)128);
-
-	dt = early_memremap(initial_dtb, map_len);
-	size = fdt_totalsize(dt);
-	if (map_len < size) {
-		early_memunmap(dt, map_len);
-		dt = early_memremap(initial_dtb, size);
-		map_len = size;
-	}
-
-	early_init_dt_verify(dt);
-	unflatten_and_copy_device_tree();
-	early_memunmap(dt, map_len);
+	/* do some early initialization based on DT */
+	early_init_dt_scan(phys_to_virt(initial_dtb));
 }
-#else
-static inline void x86_flattree_get_config(void) { }
-#endif
 
 void __init x86_dtb_init(void)
 {
-	x86_flattree_get_config();
+	unflatten_and_copy_device_tree();
 
 	if (!of_have_populated_dt())
 		return;
 
 	dtb_setup_hpet();
 	dtb_apic_setup();
+	dtb_cpus_setup();
 }

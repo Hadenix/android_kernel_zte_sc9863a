@@ -228,6 +228,7 @@ NOKPROBE_SYMBOL(oops_begin);
 
 void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 {
+
 	if (regs && kexec_should_crash(current))
 		crash_kexec(regs);
 

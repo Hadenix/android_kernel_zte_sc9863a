@@ -76,7 +76,9 @@ startup_64:
 	subq	$_text - __START_KERNEL_map, %rbp
 
 	/* Is the address not 2M aligned? */
-	testl	$~PMD_PAGE_MASK, %ebp
+	movq	%rbp, %rax
+	andl	$~PMD_PAGE_MASK, %eax
+	testl	%eax, %eax
 	jnz	bad_address
 
 	/*
@@ -160,6 +162,82 @@ startup_64:
 
 	movq	$(early_level4_pgt - __START_KERNEL_map), %rax
 	jmp 1f
+ #ifdef CONFIG_MOBILEVISOR
+ ENTRY(mv_secondary_startup_64)
+	/*
+	 * Fixup the physical addresses in the page table
+	 */
+	mov	$0, %rbp
+
+	addq	%rbp, init_level4_pgt + (L4_START_KERNEL*8)(%rip)
+
+	addq	%rbp, level3_kernel_pgt + (510*8)(%rip)
+	addq	%rbp, level3_kernel_pgt + (511*8)(%rip)
+
+	addq	%rbp, level2_fixmap_pgt + (506*8)(%rip)
+
+	/*
+	 * Set up the identity mapping for the switchover.  These
+	 * entries should *NOT* have the global bit set!  This also
+	 * creates a bunch of nonsense entries but that is fine --
+	 * it avoids problems around wraparound.
+	 */
+	leaq	_text(%rip), %rdi
+	leaq	init_level4_pgt(%rip), %rbx
+
+	movq	%rdi, %rax
+	shrq	$PGDIR_SHIFT, %rax
+
+	leaq	(4096 + _KERNPG_TABLE)(%rbx), %rdx
+	movq	%rdx, 0(%rbx,%rax,8)
+	movq	%rdx, 8(%rbx,%rax,8)
+
+	addq	$4096, %rdx
+	movq	%rdi, %rax
+	shrq	$PUD_SHIFT, %rax
+	andl	$(PTRS_PER_PUD-1), %eax
+	movq	%rdx, 4096(%rbx,%rax,8)
+	incl	%eax
+	andl	$(PTRS_PER_PUD-1), %eax
+	movq	%rdx, 4096(%rbx,%rax,8)
+
+	addq	$8192, %rbx
+	movq	%rdi, %rax
+	shrq	$PMD_SHIFT, %rdi
+	addq	$(__PAGE_KERNEL_LARGE_EXEC & ~_PAGE_GLOBAL), %rax
+	leaq	(_end - 1)(%rip), %rcx
+	shrq	$PMD_SHIFT, %rcx
+	subq	%rdi, %rcx
+	incl	%ecx
+
+10:
+	andq	$(PTRS_PER_PMD - 1), %rdi
+	movq	%rax, (%rbx,%rdi,8)
+	incq	%rdi
+	addq	$PMD_SIZE, %rax
+	decl	%ecx
+	jnz	10b
+
+	/*
+	 * Fixup the kernel text+data virtual addresses. Note that
+	 * we might write invalid pmds, when the kernel is relocated
+	 * cleanup_highmap() fixes this up along with the mappings
+	 * beyond _end.
+	 */
+	leaq	level2_kernel_pgt(%rip), %rdi
+	leaq	4096(%rdi), %r8
+	/* See if it is a valid page table entry */
+11:	testq	$1, 0(%rdi)
+	jz	12f
+	addq	%rbp, 0(%rdi)
+	/* Go to the next page */
+12:	addq	$8, %rdi
+	cmp	%r8, %rdi
+	jne	11b
+
+	/* Fixup phys_base */
+	addq	%rbp, phys_base(%rip)
+#endif
 ENTRY(secondary_startup_64)
 	/*
 	 * At this point the CPU runs in 64bit mode CS.L = 1 CS.D = 0,
@@ -181,8 +259,8 @@ ENTRY(secondary_startup_64)
 	movq	$(init_level4_pgt - __START_KERNEL_map), %rax
 1:
 
-	/* Enable PAE and PSE, but defer PGE until kaiser_enabled is decided */
-	movl	$(X86_CR4_PAE | X86_CR4_PSE), %ecx
+	/* Enable PAE mode and PGE */
+	movl	$(X86_CR4_PAE | X86_CR4_PGE), %ecx
 	movq	%rcx, %cr4
 
 	/* Setup early boot stage 4 level pagetables. */
@@ -206,8 +284,11 @@ ENTRY(secondary_startup_64)
 	btl	$20,%edi		/* No Execute supported? */
 	jnc     1f
 	btsl	$_EFER_NX, %eax
+	wrmsr
 	btsq	$_PAGE_BIT_NX,early_pmd_flags(%rip)
+	jmp 2f
 1:	wrmsr				/* Make changes effective */
+2:
 
 	/* Setup cr0 */
 #define CR0_STATE	(X86_CR0_PE | X86_CR0_MP | X86_CR0_ET | \
@@ -439,27 +520,6 @@ early_idt_ripmsg:
 	.balign	PAGE_SIZE; \
 GLOBAL(name)
 
-#ifdef CONFIG_PAGE_TABLE_ISOLATION
-/*
- * Each PGD needs to be 8k long and 8k aligned.  We do not
- * ever go out to userspace with these, so we do not
- * strictly *need* the second page, but this allows us to
- * have a single set_pgd() implementation that does not
- * need to worry about whether it has 4k or 8k to work
- * with.
- *
- * This ensures PGDs are 8k long:
- */
-#define KAISER_USER_PGD_FILL	512
-/* This ensures they are 8k-aligned: */
-#define NEXT_PGD_PAGE(name) \
-	.balign 2 * PAGE_SIZE; \
-GLOBAL(name)
-#else
-#define NEXT_PGD_PAGE(name) NEXT_PAGE(name)
-#define KAISER_USER_PGD_FILL	0
-#endif
-
 /* Automate the creation of 1 to 1 mapping pmd entries */
 #define PMDS(START, PERM, COUNT)			\
 	i = 0 ;						\
@@ -469,10 +529,9 @@ GLOBAL(name)
 	.endr
 
 	__INITDATA
-NEXT_PGD_PAGE(early_level4_pgt)
+NEXT_PAGE(early_level4_pgt)
 	.fill	511,8,0
 	.quad	level3_kernel_pgt - __START_KERNEL_map + _PAGE_TABLE
-	.fill	KAISER_USER_PGD_FILL,8,0
 
 NEXT_PAGE(early_dynamic_pgts)
 	.fill	512*EARLY_DYNAMIC_PAGE_TABLES,8,0
@@ -480,18 +539,16 @@ NEXT_PAGE(early_dynamic_pgts)
 	.data
 
 #ifndef CONFIG_XEN
-NEXT_PGD_PAGE(init_level4_pgt)
+NEXT_PAGE(init_level4_pgt)
 	.fill	512,8,0
-	.fill	KAISER_USER_PGD_FILL,8,0
 #else
-NEXT_PGD_PAGE(init_level4_pgt)
+NEXT_PAGE(init_level4_pgt)
 	.quad   level3_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE
 	.org    init_level4_pgt + L4_PAGE_OFFSET*8, 0
 	.quad   level3_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE
 	.org    init_level4_pgt + L4_START_KERNEL*8, 0
 	/* (2^48-(2*1024*1024*1024))/(2^39) = 511 */
 	.quad   level3_kernel_pgt - __START_KERNEL_map + _PAGE_TABLE
-	.fill	KAISER_USER_PGD_FILL,8,0
 
 NEXT_PAGE(level3_ident_pgt)
 	.quad	level2_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE
@@ -502,7 +559,6 @@ NEXT_PAGE(level2_ident_pgt)
 	 */
 	PMDS(0, __PAGE_KERNEL_IDENT_LARGE_EXEC, PTRS_PER_PMD)
 #endif
-	.fill	KAISER_USER_PGD_FILL,8,0
 
 NEXT_PAGE(level3_kernel_pgt)
 	.fill	L3_START_KERNEL,8,0

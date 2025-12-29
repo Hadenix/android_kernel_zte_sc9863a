@@ -36,6 +36,7 @@
 #include <asm/mach/time.h>
 #include <asm/tls.h>
 #include <asm/vdso.h>
+#include <linux/vmalloc.h>
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 #include <linux/stackprotector.h>
@@ -101,13 +102,19 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	int	i, j;
 	int	nlines;
 	u32	*p;
-
+	struct vm_struct *vaddr;
 	/*
 	 * don't attempt to dump non-kernel addresses or
 	 * values that are probably just small negative numbers
 	 */
 	if (addr < PAGE_OFFSET || addr > -256UL)
 		return;
+
+	if (addr > VMALLOC_START && addr < VMALLOC_END) {
+		vaddr = find_vm_area((const void *)addr);
+		if (!vaddr || ((vaddr->flags & VM_IOREMAP) == VM_IOREMAP))
+			return;
+	}
 
 	printk("\n%s: %#lx:\n", name, addr);
 

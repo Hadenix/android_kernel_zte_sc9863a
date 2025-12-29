@@ -42,9 +42,6 @@ EXPORT_SYMBOL(clear_page);
 
 EXPORT_SYMBOL(csum_partial);
 
-EXPORT_SYMBOL(__sw_hweight32);
-EXPORT_SYMBOL(__sw_hweight64);
-
 /*
  * Export string functions. We normally rely on gcc builtin for most of these,
  * but gcc sometimes decides not to inline them.
@@ -57,6 +54,7 @@ extern void *__memset(void *, int, __kernel_size_t);
 extern void *__memcpy(void *, const void *, __kernel_size_t);
 extern void *__memmove(void *, const void *, __kernel_size_t);
 extern void *memset(void *, int, __kernel_size_t);
+extern void *memset_orig(void *, int, __kernel_size_t);
 extern void *memcpy(void *, const void *, __kernel_size_t);
 extern void *memmove(void *, const void *, __kernel_size_t);
 
@@ -65,6 +63,7 @@ EXPORT_SYMBOL(__memcpy);
 EXPORT_SYMBOL(__memmove);
 
 EXPORT_SYMBOL(memset);
+EXPORT_SYMBOL(memset_orig);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
 

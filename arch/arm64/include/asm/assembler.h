@@ -23,6 +23,7 @@
 #ifndef __ASM_ASSEMBLER_H
 #define __ASM_ASSEMBLER_H
 
+#include <asm/cputype.h>
 #include <asm/asm-offsets.h>
 #include <asm/cpufeature.h>
 #include <asm/page.h>

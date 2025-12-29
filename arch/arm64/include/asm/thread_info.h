@@ -50,6 +50,7 @@ struct thread_info {
 #ifndef CONFIG_THREAD_INFO_IN_TASK
 	struct task_struct	*task;		/* main task structure */
 #endif
+	int			dbt_syscall;	/* DBT syscall active */
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 	u64			ttbr0;		/* saved TTBR0_EL1 */
 #endif

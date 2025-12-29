@@ -154,11 +154,19 @@ void native_send_call_func_ipi(const struct cpumask *mask)
 	free_cpumask_var(allbutself);
 }
 
+#ifdef CONFIG_SPRD_SYSDUMP
+	extern void sysdump_ipi(struct pt_regs *regs);
+#endif
+
 static int smp_stop_nmi_callback(unsigned int val, struct pt_regs *regs)
 {
 	/* We are registered on stopping cpu too, avoid spurious NMI */
 	if (raw_smp_processor_id() == atomic_read(&stopping_cpu))
 		return NMI_HANDLED;
+
+#ifdef CONFIG_SPRD_SYSDUMP
+	sysdump_ipi(regs);
+#endif
 
 	stop_this_cpu(NULL);
 
@@ -169,9 +177,12 @@ static int smp_stop_nmi_callback(unsigned int val, struct pt_regs *regs)
  * this function calls the 'stop' function on all other CPUs in the system.
  */
 
-asmlinkage __visible void smp_reboot_interrupt(void)
+asmlinkage __visible void smp_reboot_interrupt(struct pt_regs *regs)
 {
 	ipi_entering_ack_irq();
+#ifdef CONFIG_SPRD_SYSDUMP
+	sysdump_ipi(regs);
+#endif
 	stop_this_cpu(NULL);
 	irq_exit();
 }
@@ -213,10 +224,10 @@ static void native_stop_other_cpus(int wait)
 		 * didn't ask us to wait.
 		 */
 		timeout = USEC_PER_SEC;
-		while (num_online_cpus() > 1 && (wait || timeout--))
+		while (num_online_cpus() > 1 && (timeout--))
 			udelay(1);
 	}
-	
+
 	/* if the REBOOT_VECTOR didn't work, try with the NMI */
 	if ((num_online_cpus() > 1) && (!smp_no_nmi_ipi))  {
 		if (register_nmi_handler(NMI_LOCAL, smp_stop_nmi_callback,

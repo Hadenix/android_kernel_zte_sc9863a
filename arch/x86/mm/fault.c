@@ -25,6 +25,10 @@
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+#include <linux/boost_sigkill_free.h>
+#endif
+
 /*
  * Page fault error code bits:
  *
@@ -287,7 +291,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (!pmd_k)
 		return -1;
 
-	if (pmd_large(*pmd_k))
+	if (pmd_huge(*pmd_k))
 		return 0;
 
 	pte_k = pte_offset_kernel(pmd_k, address);
@@ -407,7 +411,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (pud_none(*pud) || pud_pfn(*pud) != pud_pfn(*pud_ref))
 		BUG();
 
-	if (pud_large(*pud))
+	if (pud_huge(*pud))
 		return 0;
 
 	pmd = pmd_offset(pud, address);
@@ -418,7 +422,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (pmd_none(*pmd) || pmd_pfn(*pmd) != pmd_pfn(*pmd_ref))
 		BUG();
 
-	if (pmd_large(*pmd))
+	if (pmd_huge(*pmd))
 		return 0;
 
 	pte_ref = pte_offset_kernel(pmd_ref, address);
@@ -1164,6 +1168,16 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 
 	if (error_code & PF_WRITE)
 		flags |= FAULT_FLAG_WRITE;
+
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+	if (unlikely(test_bit(MMF_FAST_FREEING, &mm->flags))) {
+		task_clear_jobctl_pending(tsk, JOBCTL_PENDING_MASK);
+		sigaddset(&tsk->pending.signal, SIGKILL);
+		set_tsk_thread_flag(tsk, TIF_SIGPENDING);
+		bad_area_nosemaphore(regs, error_code, address);
+		return;
+	}
+#endif
 
 	/*
 	 * When running in the kernel we expect faults to occur only to

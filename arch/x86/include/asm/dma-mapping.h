@@ -13,6 +13,7 @@
 #include <asm/io.h>
 #include <asm/swiotlb.h>
 #include <linux/dma-contiguous.h>
+#include <asm/cacheflush.h>
 
 #ifdef CONFIG_ISA
 # define ISA_DMA_BIT_MASK DMA_BIT_MASK(24)
@@ -47,6 +48,36 @@ bool arch_dma_alloc_attrs(struct device **dev, gfp_t *gfp);
 extern int dma_supported(struct device *hwdev, u64 mask);
 
 #include <asm-generic/dma-mapping-common.h>
+
+#ifdef CONFIG_X86_DMA_INCOHERENT
+/*
+ * We only support DMA_ATTR_WRITE_COMBINE and DMA_ATTR_NON_CONSISTENT
+ * attributes. All other attributes will be ignored. When no attribute
+ * is given (which is the default case), the pages will be set to
+ * non-cacheable.
+ * For DMA_ATTR_NON_CONSISTENT, the caller (typically a device driver)
+ * will be responsible for all the correct and necessary sync for this
+ * memory in the driver.
+ */
+static inline void set_pages_cache_type(struct page *page, unsigned int count,
+						struct dma_attrs *attrs)
+{
+	int ret = 0;
+
+	if (attrs == NULL) /* default to uncacheable */
+		ret = set_pages_uc(page, count);
+	else if (dma_get_attr(DMA_ATTR_WRITE_COMBINE, attrs))
+		ret = set_pages_wc(page, count);
+	else if (!dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs))
+		pr_err("%s(): DMA attribute %p is not supported\n",
+				__func__, attrs->flags);
+
+	if (ret)
+		pr_err("%s(): %s() failed at page: %p\n",  __func__,
+			attrs ? "set_pages_wc" : "set_pages_uc",
+			page_address(page));
+}
+#endif
 
 extern void *dma_generic_alloc_coherent(struct device *dev, size_t size,
 					dma_addr_t *dma_addr, gfp_t flag,
@@ -95,7 +126,11 @@ static inline unsigned long dma_alloc_coherent_mask(struct device *dev,
 
 	dma_mask = dev->coherent_dma_mask;
 	if (!dma_mask)
+#ifdef CONFIG_ZONE_DMA_4G
+		dma_mask = DMA_BIT_MASK(32);
+#else
 		dma_mask = (gfp & GFP_DMA) ? DMA_BIT_MASK(24) : DMA_BIT_MASK(32);
+#endif
 
 	return dma_mask;
 }
@@ -104,11 +139,16 @@ static inline gfp_t dma_alloc_coherent_gfp_flags(struct device *dev, gfp_t gfp)
 {
 	unsigned long dma_mask = dma_alloc_coherent_mask(dev, gfp);
 
+#ifdef CONFIG_ZONE_DMA_4G
+	if (dma_mask <= DMA_BIT_MASK(32))
+		gfp |= GFP_DMA;
+#else
 	if (dma_mask <= DMA_BIT_MASK(24))
 		gfp |= GFP_DMA;
 #ifdef CONFIG_X86_64
 	if (dma_mask <= DMA_BIT_MASK(32) && !(gfp & GFP_DMA))
 		gfp |= GFP_DMA32;
+#endif
 #endif
        return gfp;
 }

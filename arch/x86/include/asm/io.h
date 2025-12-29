@@ -43,6 +43,28 @@
 #include <asm/early_ioremap.h>
 #include <asm/pgtable_types.h>
 
+#ifdef CONFIG_SPRD_LAST_REGS
+#include <../../../../drivers/soc/sprd/debug/last_regs/regs_debug.h>
+#include <linux/jiffies.h>
+extern struct sprd_debug_regs_access *sprd_debug_last_regs_access;
+
+#define build_mmio_read(name, size, type, reg, barrier) \
+static inline type name(const volatile void __iomem *addr) \
+{ type ret; \
+sprd_debug_regs_read_start(addr); \
+asm volatile("mov" size " %1,%0" : reg(ret) \
+: "m" (*(volatile type __force *)addr) barrier); \
+sprd_debug_regs_access_done(); \
+return ret; }
+
+#define build_mmio_write(name, size, type, reg, barrier) \
+static inline void name(type val, volatile void __iomem *addr) \
+{ sprd_debug_regs_write_start(val, addr); \
+asm volatile("mov" size " %0,%1" : : reg(val), \
+"m" (*(volatile type __force *)addr) barrier); \
+sprd_debug_regs_access_done(); \
+}
+#else
 #define build_mmio_read(name, size, type, reg, barrier) \
 static inline type name(const volatile void __iomem *addr) \
 { type ret; asm volatile("mov" size " %1,%0":reg (ret) \
@@ -52,6 +74,7 @@ static inline type name(const volatile void __iomem *addr) \
 static inline void name(type val, volatile void __iomem *addr) \
 { asm volatile("mov" size " %0,%1": :reg (val), \
 "m" (*(volatile type __force *)addr) barrier); }
+#endif
 
 build_mmio_read(readb, "b", unsigned char, "=q", :"memory")
 build_mmio_read(readw, "w", unsigned short, "=r", :"memory")
@@ -200,7 +223,56 @@ extern void set_iounmap_nonlazy(void);
 
 #ifdef __KERNEL__
 
+#define IO_SPACE_LIMIT 0xffff
+
+#ifdef CONFIG_GENERIC_IOMAP
 #include <asm-generic/iomap.h>
+#else
+#define ioread8(addr)		readb(addr)
+#define ioread16(addr)		readw(addr)
+#define ioread16be(addr)	__be16_to_cpu(__raw_readw(addr))
+#define ioread32(addr)		readl(addr)
+#define ioread32be(addr)	__be32_to_cpu(__raw_readl(addr))
+
+#define iowrite8(v, addr)	writeb((v), (addr))
+#define iowrite16(v, addr)	writew((v), (addr))
+#define iowrite16be(v, addr)	__raw_writew(__cpu_to_be16(v), addr)
+#define iowrite32(v, addr)	writel((v), (addr))
+#define iowrite32be(v, addr)	__raw_writel(__cpu_to_be32(v), addr)
+
+#define ioread8_rep(p, dst, count) \
+	insb((unsigned long) (p), (dst), (count))
+#define ioread16_rep(p, dst, count) \
+	insw((unsigned long) (p), (dst), (count))
+#define ioread32_rep(p, dst, count) \
+	insl((unsigned long) (p), (dst), (count))
+
+#define iowrite8_rep(p, src, count) \
+	outsb((unsigned long) (p), (src), (count))
+#define iowrite16_rep(p, src, count) \
+	outsw((unsigned long) (p), (src), (count))
+#define iowrite32_rep(p, src, count) \
+	outsl((unsigned long) (p), (src), (count))
+
+#ifdef CONFIG_HAS_IOPORT_MAP
+#ifndef ioport_map
+#define ioport_map ioport_map
+static inline void __iomem *ioport_map(unsigned long port, unsigned int nr)
+{
+	return (void __iomem *)(port & IO_SPACE_LIMIT);
+}
+#endif
+
+#ifndef ioport_unmap
+#define ioport_unmap ioport_unmap
+static inline void ioport_unmap(void __iomem *p)
+{
+}
+#endif
+#endif /* CONFIG_HAS_IOPORT_MAP */
+
+#endif /* CONFIG_GENERIC_IOMAP */
+
 
 /*
  * Convert a virtual cached pointer to an uncached pointer
@@ -304,13 +376,13 @@ static inline unsigned type in##bwl##_p(int port)			\
 static inline void outs##bwl(int port, const void *addr, unsigned long count) \
 {									\
 	asm volatile("rep; outs" #bwl					\
-		     : "+S"(addr), "+c"(count) : "d"(port) : "memory");	\
+		     : "+S"(addr), "+c"(count) : "d"(port));		\
 }									\
 									\
 static inline void ins##bwl(int port, void *addr, unsigned long count)	\
 {									\
 	asm volatile("rep; ins" #bwl					\
-		     : "+D"(addr), "+c"(count) : "d"(port) : "memory");	\
+		     : "+D"(addr), "+c"(count) : "d"(port));		\
 }
 
 BUILDIO(b, b, char)
@@ -339,7 +411,6 @@ extern bool xen_biovec_phys_mergeable(const struct bio_vec *vec1,
 	 (!xen_domain() || xen_biovec_phys_mergeable(vec1, vec2)))
 #endif	/* CONFIG_XEN */
 
-#define IO_SPACE_LIMIT 0xffff
 
 #ifdef CONFIG_MTRR
 extern int __must_check arch_phys_wc_index(int handle);

@@ -26,6 +26,7 @@
 #include <linux/io.h>
 #include <linux/personality.h>
 #include <linux/random.h>
+#include <linux/security.h>
 
 #include <asm/cputype.h>
 
@@ -35,6 +36,10 @@
  */
 #define MIN_GAP (SZ_128M + ((STACK_RND_MASK << PAGE_SHIFT) + 1))
 #define MAX_GAP	(STACK_TOP/6*5)
+
+/* guest supposed to be AARCH32 */
+#define STACK_TOP_GUEST 0xffff0000
+#define MAX_GAP_GUEST (STACK_TOP_GUEST/6*5)
 
 static int mmap_is_legacy(void)
 {
@@ -72,6 +77,130 @@ static unsigned long mmap_base(unsigned long rnd)
 	return PAGE_ALIGN(STACK_TOP - gap - rnd);
 }
 
+static unsigned long mmap_base_guest(unsigned long rnd)
+{
+	unsigned long gap = rlimit(RLIMIT_STACK);
+
+	if (gap < MIN_GAP)
+		gap = MIN_GAP;
+	else if (gap > MAX_GAP_GUEST)
+		gap = MAX_GAP_GUEST;
+
+	return PAGE_ALIGN(STACK_TOP_GUEST - gap - rnd);
+}
+
+unsigned long
+arch_get_unmapped_area(struct file *filp, unsigned long addr,
+		unsigned long len, unsigned long pgoff, unsigned long flags)
+{
+	struct mm_struct *mm = current->mm;
+	struct vm_area_struct *vma;
+	struct vm_unmapped_area_info info;
+
+	if (len > TASK_SIZE - mmap_min_addr)
+		return -ENOMEM;
+
+	/* ensure that translated processes do not allocate the last page of
+	 * the 32-bit address space
+	 */
+	if (addr || (flags & MAP_FIXED)) {
+		if (current_thread_info()->dbt_syscall &&
+		    addr + len > TASK_SIZE_32 - PAGE_SIZE)
+			return -ENOMEM;
+	}
+
+	if (flags & MAP_FIXED)
+		return addr;
+
+	if (addr) {
+		addr = PAGE_ALIGN(addr);
+		vma = find_vma(mm, addr);
+		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+		    (!vma || addr + len <= vma->vm_start))
+			return addr;
+	}
+
+	info.flags = 0;
+	info.length = len;
+	info.low_limit = max(PAGE_SIZE, mmap_min_addr);
+	if (current_thread_info()->dbt_syscall) {
+		info.low_limit = mm->mmap_guest_base;
+		info.high_limit = TASK_SIZE_32 - PAGE_SIZE;
+	} else {
+		info.low_limit = mm->mmap_base;
+		info.high_limit = TASK_SIZE;
+	}
+	info.align_mask = 0;
+	return vm_unmapped_area(&info);
+}
+
+unsigned long
+arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+			  const unsigned long len, const unsigned long pgoff,
+			  const unsigned long flags)
+{
+	struct vm_area_struct *vma;
+	struct mm_struct *mm = current->mm;
+	unsigned long addr = addr0;
+	struct vm_unmapped_area_info info;
+
+	/* requested length too big for entire address space */
+	if (len > TASK_SIZE - mmap_min_addr)
+		return -ENOMEM;
+
+	/* ensure that translated processes do not allocate the last page of
+	 * the 32-bit address space
+	 */
+	if (addr || (flags & MAP_FIXED)) {
+		if (current_thread_info()->dbt_syscall &&
+		    addr + len > TASK_SIZE_32 - PAGE_SIZE)
+			return -ENOMEM;
+	}
+
+	if (flags & MAP_FIXED)
+		return addr;
+
+	/* requesting a specific address */
+	if (addr) {
+		addr = PAGE_ALIGN(addr);
+		vma = find_vma(mm, addr);
+		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+		    (!vma || addr + len <= vma->vm_start))
+			return addr;
+	}
+
+	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
+	info.length = len;
+	info.low_limit = max(PAGE_SIZE, mmap_min_addr);
+	if (current_thread_info()->dbt_syscall)
+		info.high_limit = mm->mmap_guest_base;
+	else
+		info.high_limit = mm->mmap_base;
+	info.align_mask = 0;
+	addr = vm_unmapped_area(&info);
+
+	/*
+	 * A failed mmap() very likely causes application failure,
+	 * so fall back to the bottom-up function here. This scenario
+	 * can happen with large stack limits and large mmap()
+	 * allocations.
+	 */
+	if (offset_in_page(addr)) {
+		VM_BUG_ON(addr != -ENOMEM);
+		info.flags = 0;
+		if (current_thread_info()->dbt_syscall) {
+			info.high_limit = TASK_SIZE_32 - PAGE_SIZE;
+			info.low_limit = PAGE_ALIGN(TASK_SIZE_32/4);
+		} else {
+			info.low_limit = TASK_UNMAPPED_BASE;
+			info.high_limit = TASK_SIZE;
+		}
+		addr = vm_unmapped_area(&info);
+	}
+
+	return addr;
+}
+
 /*
  * This function, called very early during the creation of a new process VM
  * image, sets up which VM layout function to use:
@@ -79,9 +208,13 @@ static unsigned long mmap_base(unsigned long rnd)
 void arch_pick_mmap_layout(struct mm_struct *mm)
 {
 	unsigned long random_factor = 0UL;
+	unsigned long random_factor_guest = 0UL;
 
-	if (current->flags & PF_RANDOMIZE)
+	if (current->flags & PF_RANDOMIZE) {
 		random_factor = arch_mmap_rnd();
+		random_factor_guest = (get_random_long() &
+			((1UL << mmap_rnd_compat_bits) - 1)) << PAGE_SHIFT;
+	}
 
 	/*
 	 * Fall back to the standard layout if the personality bit is set, or
@@ -89,9 +222,12 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 	 */
 	if (mmap_is_legacy()) {
 		mm->mmap_base = TASK_UNMAPPED_BASE + random_factor;
+		mm->mmap_guest_base = PAGE_ALIGN(TASK_SIZE_32/4) +
+			random_factor_guest;
 		mm->get_unmapped_area = arch_get_unmapped_area;
 	} else {
 		mm->mmap_base = mmap_base(random_factor);
+		mm->mmap_guest_base = mmap_base_guest(random_factor_guest);
 		mm->get_unmapped_area = arch_get_unmapped_area_topdown;
 	}
 }

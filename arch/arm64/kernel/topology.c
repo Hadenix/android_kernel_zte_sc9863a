@@ -25,6 +25,94 @@
 #include <asm/cputype.h>
 #include <asm/topology.h>
 
+#ifdef CONFIG_64BIT_ONLY_CPU
+
+struct cpumask b64_only_cpu_mask;
+
+#define cpu_logical_map(cpu)    __cpu_logical_map[cpu]
+
+/*
+ * Retrieve logical cpu index corresponding to a given MPIDR[23:0]
+ *  - mpidr: MPIDR[23:0] to be used for the look-up
+ *
+ * Returns the cpu logical index or -EINVAL on look-up error
+ */
+static inline int get_cpu_index(u32 mpidr)
+{
+	int cpu;
+
+	for (cpu = 0; cpu < nr_cpu_ids; cpu++)
+		if (cpu_logical_map(cpu) == mpidr)
+			return cpu;
+	return -EINVAL;
+}
+
+static const char * const b64_only_cores[] = {
+	"javelin",
+	NULL,
+};
+
+static bool is_64bit_only_cpu(struct device_node *cn)
+{
+	const char * const *lc;
+
+	for (lc = b64_only_cores; *lc; lc++)
+		if (of_device_is_compatible(cn, *lc))
+			return true;
+	return false;
+}
+
+void __init arch_get_64bit_only_cpus(struct cpumask *b64_only_cpu_mask)
+{
+	struct device_node *cn = NULL;
+	int cpu;
+
+	cpumask_clear(b64_only_cpu_mask);
+
+	while ((cn = of_find_node_by_type(cn, "cpu"))) {
+
+		const u32 *mpidr;
+		int len;
+
+		mpidr = of_get_property(cn, "reg", &len);
+		if (!mpidr || len != 8) {
+			pr_err("%s missing reg property\n", cn->full_name);
+			continue;
+		}
+
+		cpu = get_cpu_index(be32_to_cpup(mpidr+1));
+		if (cpu == -EINVAL) {
+			pr_err("couldn't get logical index for mpidr %x\n",
+							be32_to_cpup(mpidr+1));
+			break;
+		}
+
+		if (is_64bit_only_cpu(cn))
+			cpumask_set_cpu(cpu, b64_only_cpu_mask);
+	}
+}
+
+/*
+*Todo1: parse javelin capacity from dts file instead of hardcode
+*
+*Todo2: should implement arch_scale_freq_capacity so the cpu capacity
+*can be updated with current freq: cpufreq_register_notifier (ref to
+*k318 gts code)
+*/
+#define JAVELIN_CAPACITY SCHED_CAPACITY_SCALE
+#define JAVELIN_SMT_CAPACITY (SCHED_CAPACITY_SCALE * 0.92)
+unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
+{
+	if (sd && (sd->flags & SD_SHARE_CPUCAPACITY) && (sd->span_weight > 1))
+		return JAVELIN_SMT_CAPACITY;
+	if (cpumask_test_cpu(cpu, &b64_only_cpu_mask))
+		return JAVELIN_CAPACITY;
+	else
+		return SCHED_CAPACITY_SCALE;
+}
+
+#endif
+
 static DEFINE_PER_CPU(unsigned long, cpu_scale) = SCHED_CAPACITY_SCALE;
 
 unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu)
@@ -232,6 +320,10 @@ const struct sched_group_energy * const cpu_cluster_energy(int cpu)
 {
 	struct sched_group_energy *sge = sge_array[cpu][SD_LEVEL1];
 
+#ifndef CONFIG_DEFAULT_USE_ENERGY_AWARE
+	return NULL;
+#endif
+
 	if (!sge) {
 		pr_warn("Invalid sched_group_energy for Cluster%d\n", cpu);
 		return NULL;
@@ -244,6 +336,10 @@ static inline
 const struct sched_group_energy * const cpu_core_energy(int cpu)
 {
 	struct sched_group_energy *sge = sge_array[cpu][SD_LEVEL0];
+
+#ifndef CONFIG_DEFAULT_USE_ENERGY_AWARE
+	return NULL;
+#endif
 
 	if (!sge) {
 		pr_warn("Invalid sched_group_energy for CPU%d\n", cpu);
@@ -258,11 +354,6 @@ const struct cpumask *cpu_coregroup_mask(int cpu)
 	return &cpu_topology[cpu].core_sibling;
 }
 
-static int cpu_cpu_flags(void)
-{
-	return SD_ASYM_CPUCAPACITY;
-}
-
 static inline int cpu_corepower_flags(void)
 {
 	return SD_SHARE_PKG_RESOURCES  | SD_SHARE_POWERDOMAIN | \
@@ -270,10 +361,13 @@ static inline int cpu_corepower_flags(void)
 }
 
 static struct sched_domain_topology_level arm64_topology[] = {
+#ifdef CONFIG_SCHED_SMT
+	{ cpu_smt_mask, cpu_smt_flags, SD_INIT_NAME(SMT) },
+#endif
 #ifdef CONFIG_SCHED_MC
 	{ cpu_coregroup_mask, cpu_corepower_flags, cpu_core_energy, SD_INIT_NAME(MC) },
 #endif
-	{ cpu_cpu_mask, cpu_cpu_flags, cpu_cluster_energy, SD_INIT_NAME(DIE) },
+	{ cpu_cpu_mask, NULL, cpu_cluster_energy, SD_INIT_NAME(DIE) },
 	{ NULL, },
 };
 
@@ -374,6 +468,22 @@ static void __init reset_cpu_topology(void)
 	}
 }
 
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+struct cpumask compat_32bit_cpu_mask;
+
+void __init arch_cpu_mask_setup(void)
+{
+	cpumask_clear(&compat_32bit_cpu_mask);
+
+	if (strlen(CONFIG_32BIT_CPU_MASK)) {
+		if (cpulist_parse(CONFIG_32BIT_CPU_MASK,
+				  &compat_32bit_cpu_mask))
+			WARN(1, "Failed to parse 32bit cpu mask!\n");
+		return;
+	}
+}
+#endif
+
 void __init init_cpu_topology(void)
 {
 	reset_cpu_topology();
@@ -387,5 +497,11 @@ void __init init_cpu_topology(void)
 	else
 		set_sched_topology(arm64_topology);
 
+#ifdef CONFIG_DEFAULT_USE_ENERGY_AWARE
 	init_sched_energy_costs();
+#endif
+
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	arch_cpu_mask_setup();
+#endif
 }

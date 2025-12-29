@@ -22,6 +22,8 @@
 #include <asm/nmi.h>
 #include <asm/x86_init.h>
 #include <asm/geode.h>
+#include <asm/mv/mobilevisor.h>
+#include <asm/mv/logging/mv_svc_log.h>
 
 unsigned int __read_mostly cpu_khz;	/* TSC clocks / usec, not used here */
 EXPORT_SYMBOL(cpu_khz);
@@ -365,8 +367,6 @@ static int __init tsc_setup(char *str)
 		tsc_clocksource_reliable = 1;
 	if (!strncmp(str, "noirqtime", 9))
 		no_sched_irq_time = 1;
-	if (!strcmp(str, "unstable"))
-		mark_tsc_unstable("boot parameter");
 	return 1;
 }
 
@@ -378,7 +378,7 @@ __setup("tsc=", tsc_setup);
 /*
  * Read TSC and the reference counters. Take care of SMI disturbance
  */
-static u64 tsc_read_refs(u64 *p, int hpet)
+u64 tsc_read_refs(u64 *p, int hpet)
 {
 	u64 t1, t2;
 	int i;
@@ -399,7 +399,7 @@ static u64 tsc_read_refs(u64 *p, int hpet)
 /*
  * Calculate the TSC frequency from HPET reference
  */
-static unsigned long calc_hpet_ref(u64 deltatsc, u64 hpet1, u64 hpet2)
+unsigned long calc_hpet_ref(u64 deltatsc, u64 hpet1, u64 hpet2)
 {
 	u64 tmp;
 
@@ -408,7 +408,7 @@ static unsigned long calc_hpet_ref(u64 deltatsc, u64 hpet1, u64 hpet2)
 	hpet2 -= hpet1;
 	tmp = ((u64)hpet2 * hpet_readl(HPET_PERIOD));
 	do_div(tmp, 1000000);
-	deltatsc = div64_u64(deltatsc, tmp);
+	do_div(deltatsc, tmp);
 
 	return (unsigned long) deltatsc;
 }
@@ -894,6 +894,9 @@ void tsc_restore_sched_clock_state(void)
 	}
 
 	local_irq_restore(flags);
+
+	if (is_x86_mobilevisor())
+		mv_svc_vmm_logs_sync_timestamp(sched_clock());
 }
 
 #ifdef CONFIG_CPU_FREQ
@@ -1173,14 +1176,25 @@ static int __init init_tsc_clocksource(void)
 		return 0;
 	}
 
-	schedule_delayed_work(&tsc_irqwork, 0);
+	if (is_x86_mobilevisor()) /* Use the same TSC value in VMM */
+		clocksource_register_khz(&clocksource_tsc, tsc_khz);
+	else
+		schedule_delayed_work(&tsc_irqwork, 0);
 	return 0;
 }
+#ifdef CONFIG_MOBILEVISOR
+/*
+ * Move it early then clocksource_done_booting
+ * Safe here as HPET init at timer_init stage
+ */
+subsys_initcall(init_tsc_clocksource);
+#else
 /*
  * We use device_initcall here, to ensure we run after the hpet
  * is fully initialized, which may occur at fs_initcall time.
  */
 device_initcall(init_tsc_clocksource);
+#endif
 
 void __init tsc_init(void)
 {

@@ -85,7 +85,7 @@ pte_alloc_one_kernel(struct mm_struct *mm, unsigned long addr)
 {
 	pte_t *pte;
 
-	pte = (pte_t *)__get_free_page(PGALLOC_GFP);
+	pte = (pte_t *)__get_free_page_dont_record(PGALLOC_GFP);
 	if (pte)
 		clean_pte_table(pte);
 
@@ -98,16 +98,16 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
 	struct page *pte;
 
 #ifdef CONFIG_HIGHPTE
-	pte = alloc_pages(PGALLOC_GFP | __GFP_HIGHMEM, 0);
+	pte = alloc_pages_dont_record(PGALLOC_GFP | __GFP_HIGHMEM, 0);
 #else
-	pte = alloc_pages(PGALLOC_GFP, 0);
+	pte = alloc_pages_dont_record(PGALLOC_GFP, 0);
 #endif
 	if (!pte)
 		return NULL;
 	if (!PageHighMem(pte))
 		clean_pte_table(page_address(pte));
 	if (!pgtable_page_ctor(pte)) {
-		__free_page(pte);
+		__free_page_dont_record(pte);
 		return NULL;
 	}
 	return pte;
@@ -119,13 +119,13 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 {
 	if (pte)
-		free_page((unsigned long)pte);
+		free_page_dont_record((unsigned long)pte);
 }
 
 static inline void pte_free(struct mm_struct *mm, pgtable_t pte)
 {
 	pgtable_page_dtor(pte);
-	__free_page(pte);
+	__free_page_dont_record(pte);
 }
 
 static inline void __pmd_populate(pmd_t *pmdp, phys_addr_t pte,

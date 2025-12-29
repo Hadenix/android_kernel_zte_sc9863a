@@ -35,6 +35,9 @@ static const __initconst struct hypervisor_x86 * const hypervisors[] =
 #ifdef CONFIG_KVM_GUEST
 	&x86_hyper_kvm,
 #endif
+#ifdef CONFIG_MOBILEVISOR
+	&x86_hyper_mobilevisor,
+#endif
 };
 
 const struct hypervisor_x86 *x86_hyper;

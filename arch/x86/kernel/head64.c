@@ -139,6 +139,8 @@ static void __init copy_bootdata(char *real_mode_data)
 	}
 }
 
+void __init __weak x86_soc_early_setup(void) {}
+
 asmlinkage __visible void __init x86_64_start_kernel(char * real_mode_data)
 {
 	int i;
@@ -181,6 +183,8 @@ asmlinkage __visible void __init x86_64_start_kernel(char * real_mode_data)
 
 	/* set init_level4_pgt kernel high mapping*/
 	init_level4_pgt[511] = early_level4_pgt[511];
+
+	x86_soc_early_setup();
 
 	x86_64_start_reservations(real_mode_data);
 }

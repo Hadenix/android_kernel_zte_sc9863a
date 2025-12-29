@@ -53,4 +53,7 @@ extern void tsc_restore_sched_clock_state(void);
 /* MSR based TSC calibration for Intel Atom SoC platforms */
 unsigned long try_msr_calibrate_tsc(void);
 
+u64 tsc_read_refs(u64 *p, int hpet);
+unsigned long calc_hpet_ref(u64 deltatsc, u64 hpet1, u64 hpet2);
+
 #endif /* _ASM_X86_TSC_H */

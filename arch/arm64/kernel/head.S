@@ -733,7 +733,15 @@ __enable_mmu:
 	ubfx	x2, x1, #ID_AA64MMFR0_TGRAN_SHIFT, 4
 	cmp	x2, #ID_AA64MMFR0_TGRAN_SUPPORTED
 	b.ne	__no_granule_support
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	ttbr0_el1, x25			// load TTBR0
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+	nop
+#endif
 	msr	ttbr1_el1, x26			// load TTBR1
 	isb
 	msr	sctlr_el1, x0

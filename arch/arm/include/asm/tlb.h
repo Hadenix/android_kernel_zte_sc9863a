@@ -117,7 +117,8 @@ static inline void tlb_add_flush(struct mmu_gather *tlb, unsigned long addr)
 
 static inline void __tlb_alloc_page(struct mmu_gather *tlb)
 {
-	unsigned long addr = __get_free_pages(GFP_NOWAIT | __GFP_NOWARN, 0);
+	unsigned long addr = __get_free_pages_dont_record(GFP_NOWAIT |
+							  __GFP_NOWARN, 0);
 
 	if (addr) {
 		tlb->pages = (void *)addr;
@@ -174,7 +175,7 @@ tlb_finish_mmu(struct mmu_gather *tlb, unsigned long start, unsigned long end)
 	check_pgt_cache();
 
 	if (tlb->pages != tlb->local)
-		free_pages((unsigned long)tlb->pages, 0);
+		free_pages_dont_record((unsigned long)tlb->pages, 0);
 }
 
 /*

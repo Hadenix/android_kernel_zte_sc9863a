@@ -28,6 +28,10 @@
 
 #include "fault.h"
 
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+#include <linux/boost_sigkill_free.h>
+#endif
+
 #ifdef CONFIG_MMU
 
 #ifdef CONFIG_KPROBES
@@ -225,6 +229,15 @@ __do_page_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 {
 	struct vm_area_struct *vma;
 	int fault;
+
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+	if (unlikely(test_bit(MMF_FAST_FREEING, &mm->flags))) {
+		task_clear_jobctl_pending(tsk, JOBCTL_PENDING_MASK);
+		sigaddset(&tsk->pending.signal, SIGKILL);
+		set_tsk_thread_flag(tsk, TIF_SIGPENDING);
+		return VM_FAULT_BADMAP;
+	}
+#endif
 
 	vma = find_vma(mm, addr);
 	fault = VM_FAULT_BADMAP;

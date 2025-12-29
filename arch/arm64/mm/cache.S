@@ -63,6 +63,13 @@ user_alt 9f, "dc cvau, x4",  "dc civac, x4",  ARM64_WORKAROUND_CLEAN_CACHE
 	icache_line_size x2, x3
 	sub	x3, x2, #1
 	bic	x4, x0, x3
+#ifdef CONFIG_SPRD_ERRATUM_IC_IVAU
+	and	w4, w4, #0xfffffffc
+	mov	x9, x4
+	lsr	x9, x9, #12
+	and	x9, x9, #3
+	orr	x4, x4, x9
+#endif
 1:
 USER(9f, ic	ivau, x4	)		// invalidate I line PoU
 	add	x4, x4, x2

@@ -6,6 +6,7 @@
 
 #include <asm/alternative.h>
 #include <asm/cpufeature.h>
+#include <asm/processor.h>
 #include <asm/apicdef.h>
 #include <linux/atomic.h>
 #include <asm/fixmap.h>
@@ -511,6 +512,8 @@ extern void default_setup_apic_routing(void);
 
 extern struct apic apic_noop;
 
+extern unsigned int irq_affinity;
+
 #ifdef CONFIG_X86_32
 
 static inline int noop_x86_32_early_logical_apicid(int cpu)
@@ -547,7 +550,7 @@ flat_cpu_mask_to_apicid_and(const struct cpumask *cpumask,
 	unsigned long cpu_mask = cpumask_bits(cpumask)[0] &
 				 cpumask_bits(andmask)[0] &
 				 cpumask_bits(cpu_online_mask)[0] &
-				 APIC_ALL_CPUS;
+				 APIC_ALL_CPUS & irq_affinity;
 
 	if (likely(cpu_mask)) {
 		*apicid = (unsigned int)cpu_mask;
@@ -575,7 +578,7 @@ flat_vector_allocation_domain(int cpu, struct cpumask *retmask,
 	 * hyperthread was specified in the interrupt desitination.
 	 */
 	cpumask_clear(retmask);
-	cpumask_bits(retmask)[0] = APIC_ALL_CPUS;
+	cpumask_bits(retmask)[0] = APIC_ALL_CPUS & irq_affinity;
 }
 
 static inline void

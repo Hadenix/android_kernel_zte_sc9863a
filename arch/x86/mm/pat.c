@@ -30,6 +30,8 @@
 #include <asm/pat.h>
 #include <asm/io.h>
 
+#include <asm/mv/mobilevisor.h>
+
 #include "pat_internal.h"
 #include "mm_internal.h"
 
@@ -140,6 +142,11 @@ static inline void set_page_memtype(struct page *pg,
 		new_flags = (old_flags & _PGMT_CLEAR_MASK) | memtype_flags;
 	} while (cmpxchg(&pg->flags, old_flags, new_flags) != old_flags);
 }
+
+unsigned long page_get_pat_flags(struct page *page)
+{
+	return (page->flags & _PGMT_MASK);
+}
 #else
 static inline enum page_cache_mode get_page_memtype(struct page *pg)
 {
@@ -148,6 +155,11 @@ static inline enum page_cache_mode get_page_memtype(struct page *pg)
 static inline void set_page_memtype(struct page *pg,
 				    enum page_cache_mode memtype)
 {
+}
+
+unsigned long page_get_pat_flags(struct page *page)
+{
+	return 0;
 }
 #endif
 
@@ -308,6 +320,10 @@ void pat_init(void)
 
 	if ((c->x86_vendor == X86_VENDOR_INTEL) &&
 	    (((c->x86 == 0x6) && (c->x86_model <= 0xd)) ||
+#ifdef CONFIG_MOBILEVISOR
+	     /* WA for VMM guest. Revert me after VMM host fix PAT access */
+	     (is_x86_mobilevisor()) ||
+#endif
 	     ((c->x86 == 0xf) && (c->x86_model <= 0x6)))) {
 		/*
 		 * PAT support with the lower four entries. Intel Pentium 2,
@@ -750,8 +766,11 @@ static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 		return 1;
 
 	while (cursor < to) {
-		if (!devmem_is_allowed(pfn))
+		if (!devmem_is_allowed(pfn)) {
+			pr_info("x86/PAT: Program %s tried to access /dev/mem between [mem %#010Lx-%#010Lx], PAT prevents it\n",
+				current->comm, from, to - 1);
 			return 0;
+		}
 		cursor += PAGE_SIZE;
 		pfn++;
 	}

@@ -11,6 +11,8 @@
 #include <asm/time.h>
 #include <asm/smp.h>
 
+unsigned long pit_freq = 1193182;
+
 /*
  * HPET replaces the PIT, when enabled. So we need to know, which of
  * the two timers is used
@@ -41,3 +43,14 @@ static int __init init_pit_clocksource(void)
 }
 arch_initcall(init_pit_clocksource);
 #endif /* !CONFIG_X86_64 */
+
+static int __init pit_freq_setup(char *str)
+{
+	int ret = kstrtoul(str, 0, &pit_freq);
+
+	if (ret)
+		pr_err("invalid pit_freq %s: err:%d\n", str, ret);
+
+	return 1;
+}
+__setup("pit_freq=", pit_freq_setup);

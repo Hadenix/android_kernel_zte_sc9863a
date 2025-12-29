@@ -20,6 +20,8 @@
 #include <asm/i8259.h>
 #include <asm/desc.h>
 #include <asm/irq_remapping.h>
+#include <asm/mv/mv_vpic.h>
+#include <asm/mv/mobilevisor.h>
 
 struct apic_chip_data {
 	struct irq_cfg		cfg;
@@ -91,12 +93,8 @@ out_data:
 	return NULL;
 }
 
-static void free_apic_chip_data(unsigned int virq, struct apic_chip_data *data)
+static void free_apic_chip_data(struct apic_chip_data *data)
 {
-#ifdef	CONFIG_X86_IO_APIC
-	if (virq  < nr_legacy_irqs())
-		legacy_irq_data[virq] = NULL;
-#endif
 	if (data) {
 		free_cpumask_var(data->domain);
 		free_cpumask_var(data->old_domain);
@@ -320,7 +318,11 @@ static void x86_vector_free_irqs(struct irq_domain *domain,
 			apic_data = irq_data->chip_data;
 			irq_domain_reset_irq_data(irq_data);
 			raw_spin_unlock_irqrestore(&vector_lock, flags);
-			free_apic_chip_data(virq + i, apic_data);
+			free_apic_chip_data(apic_data);
+#ifdef	CONFIG_X86_IO_APIC
+			if (virq + i < nr_legacy_irqs())
+				legacy_irq_data[virq + i] = NULL;
+#endif
 		}
 	}
 }
@@ -359,17 +361,14 @@ static int x86_vector_alloc_irqs(struct irq_domain *domain, unsigned int virq,
 		irq_data->chip_data = data;
 		irq_data->hwirq = virq + i;
 		err = assign_irq_vector_policy(virq + i, node, data, info);
-		if (err) {
-			irq_data->chip_data = NULL;
-			free_apic_chip_data(virq + i, data);
+		if (err)
 			goto error;
-		}
 	}
 
 	return 0;
 
 error:
-	x86_vector_free_irqs(domain, virq, i);
+	x86_vector_free_irqs(domain, virq, i + 1);
 	return err;
 }
 
@@ -666,6 +665,12 @@ void irq_force_complete_move(struct irq_desc *desc)
 	struct apic_chip_data *data;
 	struct irq_cfg *cfg;
 	unsigned int cpu;
+	struct irq_domain *vector_domain = x86_vector_domain;
+
+#ifdef CONFIG_MOBILEVISOR
+	if (is_x86_mobilevisor())
+		vector_domain = mv_vpic_get_domain();
+#endif
 
 	/*
 	 * The function is called for all descriptors regardless of which
@@ -676,7 +681,7 @@ void irq_force_complete_move(struct irq_desc *desc)
 	 * Check first that the chip_data is what we expect
 	 * (apic_chip_data) before touching it any further.
 	 */
-	irqdata = irq_domain_get_irq_data(x86_vector_domain,
+	irqdata = irq_domain_get_irq_data(vector_domain,
 					  irq_desc_get_irq(desc));
 	if (!irqdata)
 		return;

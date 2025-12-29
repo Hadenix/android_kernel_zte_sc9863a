@@ -10,6 +10,8 @@
  */
 
 #include <linux/clockchips.h>
+#include <linux/clk-provider.h>
+#include <linux/clocksource.h>
 #include <linux/interrupt.h>
 #include <linux/i8253.h>
 #include <linux/time.h>
@@ -93,5 +95,9 @@ static __init void x86_late_time_init(void)
  */
 void __init time_init(void)
 {
+#ifdef CONFIG_OF
+	of_clk_init(NULL);
+#endif
+	clocksource_probe();
 	late_time_init = x86_late_time_init;
 }

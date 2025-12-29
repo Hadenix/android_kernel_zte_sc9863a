@@ -1,0 +1,255 @@
+/*****************************************
+Do not modify dts file, please modify according dtsi file
+******************************************/
+
+#include "../sp9863a-1h10-native.dts"
+#include "sprd_base_diff.dtsi"
+
+&battery {
+	io-channels = <&pmic_adc 0>,<&pmic_adc 7>,<&pmic_adc 10>,
+			<&pmic_adc 36>;
+	io-channel-names = "adc_batt_id","adc_temp","adc_vbat",
+			"adc_vchg";
+	battery-adapt-support = <0>;
+	battery-adapt-fun = <0>;
+	adp-cdp-cur = <2000>;
+	adp-dcp-cur = <2000>;
+	adp-sdp-cur = <550>;
+	adp-unknown-cur = <550>;
+	adp-dcp-cur-limit = <1600>;
+	adp-cdp-cur-limit = <1600>;
+	chg-end-vol = <4400>;
+	trickle-timeout = <300>;
+	chg-end-vol-check = <4380>;
+	chg-bat-safety-vol = <4480>;
+	rechg-vol = <4330>;
+	chg-polling-time = <25>;
+	chg-polling-time-fast = <5>;
+	rsense-real = <99>;
+	bat-id-list = <390 270>; /* kohm, tianmao weike */
+	rint = <254>;
+	cnom = <3062>;
+	ocv-tab-vol = <4362 4303 4246 4191 4137 4085 4038
+			3992 3945 3890 3857 3832 3812 3795
+			3779 3759 3739 3714 3686 3672 3500>;
+	rint-1 = <139>;
+	cnom-1 = <3171>;
+	ocv-tab-vol-1 = <4370 4304 4245 4187 4132 4080 4031
+			3982 3944 3892 3852 3827 3807 3791
+			3778 3761 3743 3719 3689 3678 3500>;
+	ocv-tab-cap = <100  95   90   85   80   75   70
+			65   60   55   50   45   40   35
+			30   25   20   15   10   5    0>;
+
+	temp-support = <1>;
+	temp-comp-res = <6>;
+	temp-tab-val = <1124 1104 1079 1047 1010 967
+			917 861 801 738 672 607
+			543 482 425 372 325 282 243>;
+	/* temperature + 1000,750 = 1000 + (-250)*/
+	temp-tab-temp = <750 800 850 900 950 1000
+			 1050 1100 1150 1200 1250 1300
+			 1350 1400 1450 1500 1550 1600 1650>;
+	jeita-temp-tab = <1000 1050 1100 1450 1550>;
+	jeita-temp-recovery-tab = <1030 1080 1130 1420 1520>;
+	jeita-cur-tab = <0 300 900 0x7FFF 1000 0>;
+	jeita-cccv-tab = <4400 4400 4400 4400 4100 4100>;
+	batt_full_design_capacity = <3200>;
+};
+
+/ {
+	zte_misc: zte_misc {
+		status = "okay";
+		compatible = "zte-misc";
+	};
+
+	charger_policy_service {
+		compatible = "zte,charger-policy-service";
+		status="okay";
+		policy,enable = <1>;
+		policy,expired-mode-enable = <1>;
+		policy,retry-times = <10>;
+		policy,timeout-seconds = <64800>;/* 18 hours */
+		policy,max-capacity = <70>;
+		policy,min-capacity = <50>;
+		policy,bms-phy-name = "battery";
+		policy,battery-phy-name = "battery";
+	};
+
+	batt_cap_learn {
+		compatible = "zte,battery-capacity-learning";
+		bcl,enable = <1>;
+		bcl,retry-times = <10>;
+		bcl,timer-period = <100>;/*ms*/
+		bcl,max-start-capacity = <15>;
+		bcl,max-temp-decidegc = <450>;
+		bcl,min-temp-decidegc = <150>;
+		bcl,max-limit-deciperc = <100>;
+		bcl,min-limit-deciperc = <50>;
+		bcl,max-increment-deciperc = <50>;
+		bcl,max-decrement-deciperc = <100>;
+		bcl,bms-phy-name = "charger";
+		bcl,battery-phy-name = "battery";
+		/*bit7: 0: use zte algorithm calc age; 1: use platform algorithm calc age*/
+		/*bit4: enable zte algorithm*/
+		/*bit3: enable platform algorithm*/
+		/*bit0: platform algorithm mode 0: integral mode; 1: delta mode*/
+		bcl,algorithm-select = <0x89>;
+		bcl,battery-specify-capacity = <3100000>;
+		bcl,battery-specify-voltage = <4390>;
+
+		/*3.4V-3.0V 0.2C delta capacity*/
+		/*age 150ma 768ma(0.2C) 1300ma*/
+		bcl,disch-curr-volt-prop = <100 64 193 393
+						86 82 258 412>;
+
+		/*current: 0.04C - 0.02C delta*/
+		bcl,topoff-prop = <100 50
+				86 72 >;
+
+		/*reduc voltage  50mv 100mv*/
+		bcl,reduc-volt-prop = <100 193 366
+					86 230 396 >;
+	};
+};
+
+&usb {
+	sprd,cable-detection-method = "gpios";
+	sprd,vbus-gpios = <&pmic_eic 0 0>;
+	sprd,usb-id-gpios = <&ap_eic 4 0>;
+};
+
+&mipi_csi_phy0_s1 {
+	/delete-node/ port;
+};
+
+&mipi_csi_phy2 {
+	/delete-node/ port;
+};
+
+&mipi_csi_phy0_m {
+	/delete-node/ port;
+};
+
+&mipi_csi_phy0_s {
+	/delete-node/ port;
+};
+
+&mipi_csi_phy0 {
+	status = "okay";
+	sprd,phyid = <0>;
+	sprd,csi = <&csi0>;
+	status = "okay";
+	port {
+		phy0_out: endpoint {
+			remote-enpoint = <&sensor_sub_0>;
+		};
+	};
+};
+
+
+&i2c1 {
+	/delete-node/ sensor-sub2@2a;
+};
+
+&i2c1 {
+	/delete-node/ sensor-sub@20;
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	sensor_sub: sensor-sub@20 {
+		compatible = "sprd,sensor-sub";
+		reg = <0x20>;
+		clock-names = "clk_src","sensor_eb",
+			"clk_96m","clk_76m8",
+			"clk_48m","clk_26m";
+		clocks = <&clk_sensor1>, <&clk_mckg_gates 6>,
+			<&clk_twpll_96m>,<&clk_twpll_76m8>,
+			<&clk_twpll_48m>,<&ext_26m>;
+		vddio-supply = <&vddcamio>;
+		vddcama-supply = <&vddcama>;
+		vddcamd-supply = <&vddcamd>;
+		vddcammot-supply = <&vddcammot>;
+		dvdd-gpios=<&ap_gpio 132 0>;
+		reset-gpios = <&ap_gpio 41 0>;
+		power-down-gpios = <&ap_gpio 40 0>;
+		host = "dcam0";
+		port {
+			sensor_sub_0: endpoint {
+				remote-endpoint = <&phy0_out>;
+			};
+		};
+	};
+};
+
+&i2c1 {
+	/delete-node/ sensor-main2@6C;
+};
+
+&i2c0 {
+	/delete-node/ sensor-main@20;
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	sensor_main: sensor-main@20 {
+		compatible = "sprd,sensor-main";
+		reg = <0x20>;
+		clock-names = "clk_src","sensor_eb",
+			"clk_96m","clk_76m8",
+			"clk_48m","clk_26m";
+		clocks = <&clk_sensor0>, <&clk_mckg_gates 5>,
+			<&clk_twpll_96m>,<&clk_twpll_76m8>,
+			<&clk_twpll_48m>,<&ext_26m>;
+		vddio-supply = <&vddcamio>;
+		vddcama-supply = <&vddcama>;
+		vddcamd-supply = <&vddcamd>;
+		vddcammot-supply = <&vddcammot>;
+		avdd-gpios=<&ap_gpio 97 0>;
+		reset-gpios = <&ap_gpio 44 0>;
+		host = "dcam0";
+		port {
+			sensor_main_0: endpoint {
+				remote-endpoint = <&phy1_out>;
+			};
+		};
+	};
+};
+
+&i2c4 {
+	/delete-node/ flash-ic@63;
+};
+
+&i2c4 {
+	bq2560x_chg: charger@6b {
+		compatible = "ti,bq2560x_chg";
+		reg = <0x6b>;
+		vbus-det-gpios = <&pmic_eic 0 0>;
+	};
+/* judge if syv697 in bq2560x probe by check pn reg[0A 0B]
+	syv697_chg: charger@6b {
+		compatible = "silergy,syv697-charger";
+		reg = <0x6b>;
+		vbus-det-gpios = <&pmic_eic 0 0>;
+	};
+*/
+	flash_ic: flash-ic@63 {
+		compatible = "sprd,flash-aw3648";
+		reg = <0x63>;
+		sprd,flash-ic = <3648>;
+		sprd,torch = <1>;
+		sprd,preflash = <1>;
+		sprd,highlight = <1>;
+		sprd,torch-level = <10>;
+		sprd,preflash-level = <15>;
+		sprd,highlight-level = <15>;
+		sprd,lvfm-enable = <1>;
+		flash-chip-en-gpios = <&ap_gpio 89 0>;
+	};
+};
+

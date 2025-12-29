@@ -32,6 +32,7 @@
 #include <linux/initrd.h>
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
+#include <linux/of_fdt.h>
 #include <linux/seq_file.h>
 #include <linux/console.h>
 #include <linux/root_dev.h>
@@ -112,7 +113,6 @@
 #include <asm/alternative.h>
 #include <asm/prom.h>
 #include <asm/microcode.h>
-#include <asm/kaiser.h>
 
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB
@@ -881,8 +881,6 @@ void __init setup_arch(char **cmdline_p)
 	 * so proper operation is guaranteed.
 	 */
 	__flush_tlb_all();
-#else
-	printk(KERN_INFO "Command line: %s\n", boot_command_line);
 #endif
 
 	/*
@@ -937,6 +935,8 @@ void __init setup_arch(char **cmdline_p)
 	iomem_resource.end = (1ULL << boot_cpu_data.x86_phys_bits) - 1;
 	setup_memory_map();
 	parse_setup_data();
+
+	x86_setup_dtb();
 
 	copy_edd();
 
@@ -1017,12 +1017,6 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	init_hypervisor_platform();
 
-	/*
-	 * This needs to happen right after XENPV is set on xen and
-	 * kaiser_enabled is checked below in cleanup_highmap().
-	 */
-	kaiser_check_boottime_disable();
-
 	x86_init.resources.probe_roms();
 
 	/* after parse_early_param, so could debug it */
@@ -1098,6 +1092,8 @@ void __init setup_arch(char **cmdline_p)
 
 	memblock_set_current_limit(ISA_END_ADDRESS);
 	memblock_x86_fill();
+
+	early_init_fdt_scan_reserved_mem();
 
 	if (efi_enabled(EFI_BOOT)) {
 		efi_fake_memmap();

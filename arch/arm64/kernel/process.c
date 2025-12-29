@@ -71,6 +71,7 @@ void (*pm_power_off)(void);
 EXPORT_SYMBOL_GPL(pm_power_off);
 
 void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
+void (*arm_pm_restart_prepare)(const char *cmd);
 
 /*
  * This is our default idle handler.
@@ -145,6 +146,8 @@ void machine_power_off(void)
  */
 void machine_restart(char *cmd)
 {
+	if (arm_pm_restart_prepare)
+		arm_pm_restart_prepare(cmd);
 	/* Disable interrupts first */
 	local_irq_disable();
 	smp_send_stop();
@@ -182,7 +185,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	 * don't attempt to dump non-kernel addresses or
 	 * values that are probably just small negative numbers
 	 */
-	if (addr < PAGE_OFFSET || addr > -256UL)
+	if (addr < KIMAGE_VADDR || addr > -256UL)
 		return;
 
 	printk("\n%s: %#lx:\n", name, addr);
@@ -274,7 +277,7 @@ static void tls_thread_flush(void)
 {
 	asm ("msr tpidr_el0, xzr");
 
-	if (is_compat_task()) {
+	if (is_a32_compat_task()) {
 		current->thread.tp_value = 0;
 
 		/*
@@ -382,6 +385,13 @@ static void tls_thread_switch(struct task_struct *next)
 	write_sysreg(*task_user_tls(next), tpidr_el0);
 }
 
+#if defined(CONFIG_SPRD_CPU_USAGE) && defined(CONFIG_SPRD_DEBUG)
+extern void sprd_update_cpu_usage(struct task_struct *prev,
+				  struct task_struct *next);
+#else
+#define sprd_update_cpu_usage(prev, next)
+#endif
+
 /* Restore the UAO state depending on next's addr_limit */
 void uao_thread_switch(struct task_struct *next)
 {
@@ -421,6 +431,7 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	tls_thread_switch(next);
 	hw_breakpoint_thread_switch(next);
 	contextidr_thread_switch(next);
+	sprd_update_cpu_usage(prev, next);
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	entry_task_switch(next);
 #endif
@@ -479,13 +490,34 @@ unsigned long arch_align_stack(unsigned long sp)
 	return sp & ~0xf;
 }
 
-static unsigned long randomize_base(unsigned long base)
+unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
+	unsigned long base = mm->brk;
 	unsigned long range_end = base + (STACK_RND_MASK << PAGE_SHIFT) + 1;
+	unsigned long max_stack, range_limit;
+	/*
+	 * Determine how much room do we need to leave available for the stack.
+	 * We limit this to a reasonable value, because extremely large or
+	 * unlimited stacks are always going to bump up against brk at some
+	 * point and we don't want to fail to randomise brk in those cases.
+	 */
+	max_stack = rlimit(RLIMIT_STACK);
+	if (max_stack > SZ_128M)
+		max_stack = SZ_128M;
+
+	range_limit = mm->start_stack - max_stack - 1;
+	if (range_end > range_limit)
+		range_end = range_limit;
+
 	return randomize_range(base, range_end, 0) ? : base;
 }
 
-unsigned long arch_randomize_brk(struct mm_struct *mm)
+void arch_cpu_idle_enter(void)
 {
-	return randomize_base(mm->brk);
+	idle_notifier_call_chain(IDLE_START);
+}
+
+void arch_cpu_idle_exit(void)
+{
+	idle_notifier_call_chain(IDLE_END);
 }

@@ -19,6 +19,9 @@
 #include <asm/hw_irq.h>
 #include <asm/desc.h>
 
+#include <asm/mv/mv_hypercalls.h>
+#include <asm/mv/cpu.h>
+
 #define CREATE_TRACE_POINTS
 #include <asm/trace/irq_vectors.h>
 
@@ -102,7 +105,8 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	seq_puts(p, "  Rescheduling interrupts\n");
 	seq_printf(p, "%*s: ", prec, "CAL");
 	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", irq_stats(j)->irq_call_count);
+		seq_printf(p, "%10u ", irq_stats(j)->irq_call_count -
+					irq_stats(j)->irq_tlb_count);
 	seq_puts(p, "  Function call interrupts\n");
 	seq_printf(p, "%*s: ", prec, "TLB");
 	for_each_online_cpu(j)
@@ -236,6 +240,13 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 	desc = __this_cpu_read(vector_irq[vector]);
 
+#ifdef CONFIG_MOBILEVISOR
+	if (!mv_is_guest_vector(vector)) {
+		mv_virq_spurious(vector);
+		goto exit;
+	}
+#endif
+
 	if (!handle_irq(desc, regs)) {
 		ack_APIC_irq();
 
@@ -247,7 +258,9 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 			__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
 		}
 	}
-
+#ifdef CONFIG_MOBILEVISOR
+exit:
+#endif
 	exiting_irq();
 
 	set_irq_regs(old_regs);
@@ -541,9 +554,57 @@ void fixup_irqs(void)
 				__this_cpu_write(vector_irq[vector], VECTOR_RETRIGGERED);
 			}
 			raw_spin_unlock(&desc->lock);
+			pr_emerg_ratelimited("Vector %d retriggered on cpu %d?\n",
+				vector, smp_processor_id());
 		}
 		if (__this_cpu_read(vector_irq[vector]) != VECTOR_RETRIGGERED)
 			__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
+	}
+}
+
+/* A cpu has been added from cpu_online_mask, update the irq affinities */
+void restore_irqs_affinity(void)
+{
+	unsigned int irq;
+	struct irq_desc *desc;
+	struct irq_data *data;
+	struct irq_chip *chip;
+	int ret;
+
+	for_each_irq_desc(irq, desc) {
+		const struct cpumask *affinity;
+		unsigned long flags;
+
+		if (!desc)
+			continue;
+		if (irq == 2)
+			continue;
+
+		/* interrupts need to be disabled at this point */
+		raw_spin_lock_irqsave(&desc->lock, flags);
+
+		data = irq_desc_get_irq_data(desc);
+		affinity = irq_data_get_affinity_mask(data);
+
+		if (!irq_has_action(irq) || irqd_is_per_cpu(data)) {
+			raw_spin_unlock_irqrestore(&desc->lock, flags);
+			continue;
+		}
+
+		if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
+			pr_notice("Broken affinity for irq %d\n", irq);
+			affinity = cpu_online_mask;
+		}
+
+		chip = irq_data_get_irq_chip(data);
+		if (chip->irq_set_affinity) {
+			ret = chip->irq_set_affinity(data, affinity, true);
+			if (ret == -ENOSPC)
+				pr_crit("No available vectors for IRQ %d.\n",
+					irq);
+		}
+
+		raw_spin_unlock_irqrestore(&desc->lock, flags);
 	}
 }
 #endif

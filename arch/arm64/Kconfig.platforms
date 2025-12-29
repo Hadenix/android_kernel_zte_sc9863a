@@ -97,9 +97,77 @@ config ARCH_TEGRA_132_SOC
 	  Tegra124's "4+1" Cortex-A15 CPU complex.
 
 config ARCH_SPRD
-	bool "Spreadtrum SoC platform"
+	bool "Spreadtrum SoC families"
+	select REGMAP
+	select MFD_SYSCON
+	select PINCTRL
+	select CLKSRC_SPRD
 	help
 	  Support for Spreadtrum ARM based SoCs
+
+menu "Spreadtrum SharkL2 Family"
+
+config SOC_SHARKLJ1
+	bool "Spreadtrum Sharklj1 Soc Support"
+	depends on ARCH_SPRD
+	select DBT
+	default n
+	help
+	  This enables Spreadtrum sharklj1 and compatible Soc support.
+	  You only need to enable this, if you want to support sharklj1.
+
+config SOC_SHARKLE
+	bool "Spreadtrum SharklE Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum sharkle and compatible Soc support.
+	  You only need to enable this, if you want to support sharkle.
+
+config SOC_SHARKL3
+	bool "Spreadtrum Sharkl3 Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum sharkl3 and compatible Soc support.
+	  You only need to enable this, if you want to support sharkle.
+
+config SOC_ROC1
+	bool "Spreadtrum Roc1 Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum roc1 and compatible Soc support.
+	  You only need to enable this, if you want to support roc1.
+
+config SOC_SHARKL5
+	bool "Spreadtrum sharkl5 Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum sharkl5 and compatible Soc support.
+	  You only need to enable this, if you want to support sharkl5.
+
+endmenu
+
+menu "Spreadtrum Whale Family"
+
+config SOC_WHALE2
+	bool "Spreadtrum Whale2 Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum SC9860 or SC9850 and compatible Soc support.
+	  You only need to enable this, if you want to support SC9860 or SC9850.
+
+config SOC_WHALEK
+	bool "Spreadtrum Whalek Soc Support"
+	depends on ARCH_SPRD
+	default n
+	help
+	  This enables Spreadtrum Whalek and compatible Soc support.
+	  You only need to enable this, if you want to support whalek.
+endmenu
 
 config ARCH_THUNDER
 	bool "Cavium Inc. Thunder SoC Family"

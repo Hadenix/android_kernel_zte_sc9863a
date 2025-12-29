@@ -476,6 +476,38 @@ config CAVIUM_ERRATUM_27456
 
 	  If unsure, say Y.
 
+config SPRD_ERRATUM_IC_IVAU
+	bool "Javelin erratum: the defect is on “IC IVAU” instruction"
+	help
+	   ARM’s “IC IVAU, [X]” instruction takes VA address into register X
+	   to invalidate the instruction cache lines in the same snoop domain.
+	   Without workaround, the pseudo code is
+	   X=VA[63:0]
+	   IC IVAU, [X]
+	   With workaround, the pseudo code is
+	   X={VA[63:2], VA[13.12]}
+	   IC IVAU, [X]
+
+config SPRD_ERRATUM_JAVELIN_MMUREG
+	bool "Javelin erratum: javelin may write wrong value to mmu registers"
+	help
+	   There are issues in javelin DCU module, when writing MMU registers,
+	   for example ttbr0_el1,ttbr1_el1,tcr_el1,mair_el1, the wrong value may
+	   be wrotten to these registers. isb and 16 bytes align is needed when
+	   writing these registers.
+
+config SPRD_ERRATUM_JAVELIN_ECO05
+	bool "Javelin erratum: FPCR register write defect"
+	help
+	   FPCR controls the FP instruction execution behaviors. Due to the
+	   defect in Javelin, the behavior change takes two cycles after
+	   MSR FPCR execution. Consequently, there could be up to 5 floating
+	   point instructions following the MSR FPSR instruction, which cannot
+	   see the side-effect of the register write. Architecturally, it is
+	   required that the very next instructions should see the
+	   aforementioned side-effect. The software workaround is to add an ISB
+	   instruction after the MSR FPCR instruction.
+
 endmenu
 
 
@@ -565,6 +597,40 @@ config SCHED_SMT
 	  MultiThreading at a cost of slightly increased overhead in some
 	  places. If unsure say N here.
 
+config SCHED_COMPAT_LIMIT
+	bool "(EXPERIMENTAL) has compat limit in scheduling"
+	depends on SMP
+	default n
+	help
+	  Experimental scheduler optimizations for compat limit platforms.
+	  If unsure say N here.
+
+config 32BIT_CPU_MASK
+	string "scheduler 32bit CPU mask"
+	depends on SCHED_COMPAT_LIMIT
+	default "0-1"
+	help
+	  Specify the cpuids of the 32bit CPUs in the system as a list string,
+	  e.g. cpuid 0+1 should be specified as 0-1.
+
+config 64BIT_ONLY_CPU
+	bool "AArch64 only cpu support"
+	depends on SMP
+	default n
+	help
+	  AArch64 only cpu support, design for CPU core which only support 64bit
+	  process, corresponding to some scheduler strategy, which will assgin
+	  task accordingly for better performance-power balance.
+	  If unsure say N here.
+
+config DBT
+	bool "Dynamic Binary Translation"
+	depends on COMPAT
+	default n
+	help
+	  Support dynimicly translate ARM 32-bit binary to ARM64 instructions.
+	  If unsure say N here.
+
 config NR_CPUS
 	int "Maximum number of CPUs (2-4096)"
 	range 2 4096
@@ -646,7 +712,7 @@ config FORCE_MAX_ZONEORDER
 	int
 	default "14" if (ARM64_64K_PAGES && TRANSPARENT_HUGEPAGE)
 	default "12" if (ARM64_16K_PAGES && TRANSPARENT_HUGEPAGE)
-	default "11"
+	default "12"
 	help
 	  The kernel memory allocator divides physically contiguous memory
 	  blocks into "zones", where each zone is a power of two number of
@@ -985,6 +1051,12 @@ config BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES
 	help
 	  Space separated list of names of dtbs to append when
 	  building a concatenated Image.gz-dtb.
+
+config BUILD_ARM64_DTC
+	string "dtc to use"
+
+config BUILD_ARM64_DTC_FLAGS
+	string "extra dtc flags"
 
 endmenu
 

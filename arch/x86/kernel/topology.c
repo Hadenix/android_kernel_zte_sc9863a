@@ -32,8 +32,47 @@
 #include <linux/smp.h>
 #include <linux/irq.h>
 #include <asm/cpu.h>
+#ifdef CONFIG_INTEL_DWS
+#include <linux/sched.h>
+#endif
 
 static DEFINE_PER_CPU(struct x86_cpu, cpu_devices);
+
+#ifdef CONFIG_INTEL_DWS
+/*
+ * Enable SD_INTEL_DWS across modules
+ */
+static inline int cpu_module_flags(void)
+{
+	return SD_INTEL_DWS;
+}
+
+#ifdef CONFIG_INTEL_CORE_DWS
+static inline int cpu_coregroup_flags(void)
+{
+	return cpu_core_flags() | SD_INTEL_DWS;
+}
+#else
+static inline int cpu_coregroup_flags(void)
+{
+	return cpu_core_flags();
+}
+#endif
+
+/*
+ * Topology list, bottom-up.
+ */
+static struct sched_domain_topology_level x86_topology[] = {
+#ifdef CONFIG_SCHED_SMT
+	{ cpu_smt_mask, cpu_smt_flags, SD_INIT_NAME(SMT) },
+#endif
+#ifdef CONFIG_SCHED_MC
+	{ cpu_coregroup_mask, cpu_coregroup_flags, SD_INIT_NAME(MC) },
+#endif
+	{ cpu_cpu_mask, cpu_module_flags, SD_INIT_NAME(DIE) },
+	{ NULL, },
+};
+#endif
 
 #ifdef CONFIG_HOTPLUG_CPU
 
@@ -171,3 +210,10 @@ static int __init topology_init(void)
 	return 0;
 }
 subsys_initcall(topology_init);
+
+#ifdef CONFIG_INTEL_DWS
+void __init early_init_cpu_topology(void)
+{
+	set_sched_topology(x86_topology);
+}
+#endif

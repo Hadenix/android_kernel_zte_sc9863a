@@ -34,18 +34,18 @@
 
 		ioapic1: interrupt-controller@fec00000 {
 			#interrupt-cells = <2>;
-			compatible = "intel,ce4100-ioapic";
+			compatible = "intel,x86-ioapic";
 			interrupt-controller;
 			reg = <0xfec00000 0x1000>;
 		};
 
 		timer@fed00000 {
-			compatible = "intel,ce4100-hpet";
+			compatible = "intel,x86-hpet";
 			reg = <0xfed00000 0x200>;
 		};
 
 		lapic0: interrupt-controller@fee00000 {
-			compatible = "intel,ce4100-lapic";
+			compatible = "intel,x86-lapic";
 			reg = <0xfee00000 0x1000>;
 		};
 
@@ -62,7 +62,7 @@
 			/* Secondary IO-APIC */
 			ioapic2: interrupt-controller@0,1 {
 				#interrupt-cells = <2>;
-				compatible = "intel,ce4100-ioapic";
+				compatible = "intel,x86-ioapic";
 				interrupt-controller;
 				reg = <0x100 0x0 0x0 0x0 0x0>;
 				assigned-addresses = <0x02000000 0x0 0xbffff000 0x0 0x1000>;

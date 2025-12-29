@@ -300,6 +300,12 @@ struct compat_shmid64_ds {
 
 static inline int is_compat_task(void)
 {
+	return current_thread_info()->dbt_syscall ||
+		test_thread_flag(TIF_32BIT);
+}
+
+static inline int is_a32_compat_task(void)
+{
 	return test_thread_flag(TIF_32BIT);
 }
 

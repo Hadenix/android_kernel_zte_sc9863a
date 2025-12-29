@@ -1,0 +1,107 @@
+/ { lcds {
+	lcd_hx8394f_mipi_lead_hd: lcd83940f@83940f {
+		zte,lcd-init-code-version = "20190225";
+		zte,lcd-backlight-register-bit-length = <0x08>;
+		zte,lcd-cabc-default-value = <0x01>;
+		zte,lcd-cabc-off-command = [23 00 00 02 55 00];
+		zte,lcd-cabc-low-command = [23 00 00 02 55 01];
+		zte,lcd-cabc-medium-command = [23 00 00 02 55 02];
+		zte,lcd-cabc-high-command = [23 00 00 02 55 03];
+		zte,lcm_backlight_curve_mode = "lcd_brightness_max_450_lux";
+		zte,lcd_bl_vsp_vsn_voltage = <0x14>;
+		/*zte,lcd-close-dynamic-dimming;*/
+		/*zte,lcd-depay-open-bl-value = <64>;*/
+
+		work-mode = <1>;
+		bpp = <24>;
+		lane-number = <4>;
+
+		need-check-esd = <3>;
+		esd-timeout = <2000>;
+
+		fps = <60>;
+		fps-v2 = <60>;
+		width-mm = <68>;
+		height-mm = <143>;
+		panel-name = "lcd_hx8394f_mipi_lead_hd";
+
+		power-on-sequence = <
+					62  1  10
+					50  1  1
+					50  0  5
+					50  1  12
+					4   1  2
+					5   1  10
+					>;
+		power-off-sequence = <
+					5   0	5
+					50  1  10
+					4   0   5
+					>;
+
+		init-data = [
+39 00 00 04 b9 ff 83 94
+39 00 00 0b b1 48 0f 6f 09 32 44 71 31 4d 30
+39 00 00 07 ba 63 03 68 6b b2 c0
+39 00 00 07 b2 00 80 82 0c 07 22
+39 00 00 16 b4 17 60 17 60 17 60 01 0c 70 55 00 3f 17 60 17 60
+		17 60 01 0c 70
+39 00 00 22 d3 00 00 00 00 3c 1c 00 00 32 10 09 00 09 32 15 fd
+		05 fd 32 00 00 00 00 37 03 0b 0b 37 00 00 00 0c
+		40
+39 00 00 2d d5 19 19 18 18 1b 1b 1a 1a 00 01 02 03 04 05 06 07
+		20 21 18 18 18 18 18 18 18 18 18 18 18 18 24 25
+		18 18 18 18 18 18 18 18 18 18 18 18
+39 00 00 2d d6 18 18 19 19 1b 1b 1a 1a 07 06 05 04 03 02 01 00
+		25 24 18 18 18 18 18 18 18 18 18 18 18 18 21 20
+		18 18 18 18 18 18 18 18 18 18 18 18
+39 00 00 3b e0 00 02 07 0d 0d 10 12 10 22 32 42 41 4b 60 66 6d
+		7b 7f 7c 8c 9a 4c 49 4b 4d 4e 6d 7f 7f 00 02 07
+		0c 0c 0f 11 10 22 32 42 41 4b 5f 65 6c 7a 7f 7c
+		8c 9a 4c 49 4b 4d 4e 6d 7f 7f
+39 00 00 02 cc 0b
+39 00 00 03 c0 1f 31
+39 00 00 03 b6 75 75
+39 00 00 06 c9 13 00 0a 8f 8f
+39 00 00 02 d4 02
+39 00 00 02 c6 ed
+39 00 00 02 35 00
+39 00 00 02 51 00
+39 00 00 02 53 24
+39 00 00 02 55 01
+39 00 00 02 5e 04
+05 78 00 02 11 00
+05 32 00 02 29 00
+			];
+		sleep-in = [
+			13 78 00 01 28
+			13 78 00 01 10
+			];
+		sleep-out = [
+			13 78 00 01 11
+			13 64 00 01 29
+			];
+
+		display-timings {
+			clock-frequency = <530000>;
+			hactive = <720>;
+			vactive = <1520>;
+			hback-porch = <36>;
+			hfront-porch = <36>;
+			hfront-porch-v2 = <36>;
+			vback-porch = <26>;
+			vfront-porch = <50>;
+			hsync-len = <8>;
+			vsync-len = <4>;
+		};
+		oled-backlight {
+			default-brightness = <102>;
+			max-level = <255>;
+			brightness-levels = [
+				23 00 00 02 51 00
+				23 00 00 02 53 2C
+			];
+		};
+	};
+};};
+

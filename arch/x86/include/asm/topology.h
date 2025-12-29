@@ -135,4 +135,8 @@ struct pci_bus;
 int x86_pci_root_bus_node(int bus);
 void x86_pci_root_bus_resources(int bus, struct list_head *resources);
 
+#ifdef CONFIG_INTEL_DWS
+void __init early_init_cpu_topology(void);
+#endif
+
 #endif /* _ASM_X86_TOPOLOGY_H */

@@ -16,6 +16,7 @@
 #include <linux/serial_reg.h>
 #include <linux/serial_8250.h>
 #include <linux/reboot.h>
+#include <linux/of_platform.h>
 
 #include <asm/ce4100.h>
 #include <asm/prom.h>
@@ -139,6 +140,22 @@ static void sdv_pci_init(void)
 {
 	x86_of_pci_init();
 }
+
+static struct of_device_id ce4100_bus_ids[] __initdata = {
+	{ .compatible = "intel,ce4100-cp", },
+	{ .compatible = "isa", },
+	{ .compatible = "pci", },
+	{},
+};
+
+static int __init x86_ce4100_bus_probe(void)
+{
+	if (!of_have_populated_dt())
+		return 0;
+
+	return of_platform_bus_probe(NULL, ce4100_bus_ids, NULL);
+}
+module_init(x86_ce4100_bus_probe);
 
 /*
  * CE4100 specific x86_init function overrides and early setup

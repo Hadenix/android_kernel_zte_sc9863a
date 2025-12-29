@@ -49,6 +49,9 @@
 	cmp	\tmp, \state
 	b.eq	9999f
 	msr	fpcr, \state
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_ECO05
+	isb
+#endif
 9999:
 .endm
 

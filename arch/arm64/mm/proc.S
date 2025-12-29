@@ -92,6 +92,9 @@ ENDPROC(cpu_do_suspend)
  * Returns:
  *	sctlr_el1 value in x0
  */
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 ENTRY(cpu_do_resume)
 	/*
 	 * Invalidate local tlb entries before turning on MMU
@@ -100,19 +103,56 @@ ENTRY(cpu_do_resume)
 	ldp	x2, x3, [x0]
 	ldp	x4, x5, [x0, #16]
 	ldp	x6, x7, [x0, #32]
+
 	ldp	x8, x9, [x0, #48]
 	ldp	x10, x11, [x0, #64]
 	ldp	x12, x13, [x0, #80]
 	ldr	x14, [x0, #96]
 	msr	tpidr_el0, x2
+
 	msr	tpidrro_el0, x3
 	msr	contextidr_el1, x4
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+#endif
+
 	msr	mair_el1, x5
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+	nop
+#endif
+
 	msr	cpacr_el1, x6
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	nop
+	nop
+	nop
+#endif
+
 	msr	ttbr0_el1, x1
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+	nop
+#endif
+
 	msr	ttbr1_el1, x7
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+#endif
+
 	tcr_set_idmap_t0sz x8, x7
+
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	tcr_el1, x8
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+#endif
+
 	msr	vbar_el1, x9
 	msr	mdscr_el1, x10
 	msr	tpidr_el1, x13
@@ -163,6 +203,9 @@ ENTRY(idmap_cpu_replace_ttbr1)
 	msr	daifset, #0xf
 
 	adrp	x1, empty_zero_page
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	ttbr1_el1, x1
 	isb
 
@@ -170,6 +213,9 @@ ENTRY(idmap_cpu_replace_ttbr1)
 	dsb	nsh
 	isb
 
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	ttbr1_el1, x0
 	isb
 
@@ -214,7 +260,15 @@ ENTRY(__cpu_setup)
 		     MAIR(0x44, MT_NORMAL_NC) | \
 		     MAIR(0xff, MT_NORMAL) | \
 		     MAIR(0xbb, MT_NORMAL_WT)
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	mair_el1, x5
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+	nop
+#endif
 	/*
 	 * Prepare SCTLR
 	 */
@@ -255,7 +309,15 @@ ENTRY(__cpu_setup)
 1:	orr	x10, x10, #TCR_HA		// hardware Access flag update
 2:
 #endif	/* CONFIG_ARM64_HW_AFDBM */
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	.align 6
+#endif
 	msr	tcr_el1, x10
+#ifdef CONFIG_SPRD_ERRATUM_JAVELIN_MMUREG
+	isb
+	nop
+	nop
+#endif
 	ret					// return to head.S
 ENDPROC(__cpu_setup)
 

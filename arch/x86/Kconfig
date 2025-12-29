@@ -21,20 +21,18 @@ config X86
 	select ACPI_SYSTEM_POWER_STATES_SUPPORT	if ACPI
 	select ANON_INODES
 	select ARCH_CLOCKSOURCE_DATA
-	select ARCH_DISCARD_MEMBLOCK
 	select ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
 	select ARCH_HAS_DEBUG_STRICT_USER_COPY_CHECKS
 	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_FAST_MULTIPLIER
 	select ARCH_HAS_GCOV_PROFILE_ALL
-	select ARCH_HAS_KCOV			if X86_64
 	select ARCH_HAS_PMEM_API		if X86_64
 	select ARCH_HAS_MMIO_FLUSH
 	select ARCH_HAS_SG_CHAIN
 	select ARCH_HAVE_NMI_SAFE_CMPXCHG
 	select ARCH_MIGHT_HAVE_ACPI_PDC		if ACPI
 	select ARCH_MIGHT_HAVE_PC_PARPORT
-	select ARCH_MIGHT_HAVE_PC_SERIO
+	select ARCH_MIGHT_HAVE_PC_SERIO		if !X86_SPRD_ISOC
 	select ARCH_SUPPORTS_ATOMIC_RMW
 	select ARCH_SUPPORTS_DEFERRED_STRUCT_PAGE_INIT
 	select ARCH_SUPPORTS_INT128		if X86_64
@@ -43,7 +41,7 @@ config X86
 	select ARCH_USE_CMPXCHG_LOCKREF		if X86_64
 	select ARCH_USE_QUEUED_RWLOCKS
 	select ARCH_USE_QUEUED_SPINLOCKS
-	select ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+	select ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH if SMP
 	select ARCH_WANTS_DYNAMIC_TASK_STRUCT
 	select ARCH_WANT_FRAME_POINTERS
 	select ARCH_WANT_IPC_PARSE_VERSION	if X86_32
@@ -54,7 +52,7 @@ config X86
 	select CLKEVT_I8253
 	select CLKSRC_I8253			if X86_32
 	select CLOCKSOURCE_VALIDATE_LAST_CYCLE
-	select CLOCKSOURCE_WATCHDOG
+	select CLOCKSOURCE_WATCHDOG	if !X86_SPRD_ISOC
 	select CLONE_BACKWARDS			if X86_32
 	select COMPAT_OLD_SIGACTION		if IA32_EMULATION
 	select DCACHE_WORD_ACCESS
@@ -65,10 +63,9 @@ config X86
 	select GENERIC_CLOCKEVENTS_MIN_ADJUST
 	select GENERIC_CMOS_UPDATE
 	select GENERIC_CPU_AUTOPROBE
-	select GENERIC_CPU_VULNERABILITIES
 	select GENERIC_EARLY_IOREMAP
 	select GENERIC_FIND_FIRST_BIT
-	select GENERIC_IOMAP
+	select GENERIC_IOMAP if !X86_SPRD_ISOC
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
 	select GENERIC_PENDING_IRQ		if SMP
@@ -93,7 +90,6 @@ config X86
 	select HAVE_ARCH_TRANSPARENT_HUGEPAGE
 	select HAVE_ARCH_WITHIN_STACK_FRAMES
 	select HAVE_BPF_JIT			if X86_64
-	select HAVE_EBPF_JIT			if X86_64
 	select HAVE_CC_STACKPROTECTOR
 	select HAVE_CMPXCHG_DOUBLE
 	select HAVE_CMPXCHG_LOCAL
@@ -108,7 +104,6 @@ config X86
 	select HAVE_DYNAMIC_FTRACE
 	select HAVE_DYNAMIC_FTRACE_WITH_REGS
 	select HAVE_EFFICIENT_UNALIGNED_ACCESS
-	select HAVE_EXIT_THREAD
 	select HAVE_FENTRY			if X86_64
 	select HAVE_FTRACE_MCOUNT_RECORD
 	select HAVE_FUNCTION_GRAPH_FP_TEST
@@ -268,7 +263,7 @@ config ARCH_WANT_GENERAL_HUGETLB
 	def_bool y
 
 config ZONE_DMA32
-	def_bool y if X86_64
+	def_bool y if X86_64 && !ZONE_DMA_4G
 
 config AUDIT_ARCH
 	def_bool y if X86_64
@@ -300,6 +295,20 @@ config X86_32_LAZY_GS
 	def_bool y
 	depends on X86_32 && !CC_STACKPROTECTOR
 
+config ARCH_SPRD
+	bool
+	select REGMAP
+	select REGMAP_MMIO
+	select MFD_SYSCON
+	select PINCTRL
+	help
+	  Support for Spreadtrum x86 based SoCs
+
+config ARCH_HWEIGHT_CFLAGS
+	string
+	default "-fcall-saved-ecx -fcall-saved-edx" if X86_32
+	default "-fcall-saved-rdi -fcall-saved-rsi -fcall-saved-rdx -fcall-saved-rcx -fcall-saved-r8 -fcall-saved-r9 -fcall-saved-r10 -fcall-saved-r11" if X86_64
+
 config ARCH_SUPPORTS_UPROBES
 	def_bool y
 
@@ -320,6 +329,20 @@ source "kernel/Kconfig.freezer"
 
 menu "Processor type and features"
 
+config INTEL_DWS
+	bool "Intel DWS feature"
+	default y
+	depends on X86
+	---help---
+	  Enable/Disable Intel DWS feature.
+
+config INTEL_CORE_DWS
+	bool "Intel DWS packing inside module"
+	default y
+	depends on X86 && INTEL_DWS
+	---help---
+	  Enable/Disable Intel CORE DWS feature.
+
 config ZONE_DMA
 	bool "DMA memory allocation support" if EXPERT
 	default y
@@ -329,6 +352,27 @@ config ZONE_DMA
 	  Disable if no such devices will be used.
 
 	  If unsure, say Y.
+
+config ZONE_DMA_4G
+	bool "Set DMA memory to all areas under 4G"
+	default n
+	depends on ZONE_DMA
+	help
+		Some vendors that licensed Atom processor IP from Intel doesn't
+		has leacy ISA dma device, set the DMA zone to all 32bit address
+		space, keep it compatible with ARM define.
+
+		If you don't know what to do here, say N.
+
+config X86_DMA_INCOHERENT
+	bool "Support Processor with DMA incoherent cache"
+	default n
+	---help---
+		This option is for some systems that need incoherent dma cache.
+		Some vendors that licensed Atom processor IP from Intel may have
+		SoCs with DMA incoherent cache.
+
+		If you don't know what to do here, say N.
 
 config SMP
 	bool "Symmetric multi-processing support"
@@ -369,17 +413,6 @@ config X86_FEATURE_NAMES
 
 	  If in doubt, say Y.
 
-config X86_FAST_FEATURE_TESTS
-	bool "Fast CPU feature tests" if EMBEDDED
-	default y
-	---help---
-	  Some fast-paths in the kernel depend on the capabilities of the CPU.
-	  Say Y here for the kernel to patch in the appropriate code at runtime
-	  based on the capabilities of the CPU. The infrastructure for patching
-	  code at runtime takes up some additional space; space-constrained
-	  embedded systems may wish to say N here to produce smaller, slightly
-	  slower code.
-
 config X86_X2APIC
 	bool "Support x2apic"
 	depends on X86_LOCAL_APIC && X86_64 && (IRQ_REMAP || HYPERVISOR_GUEST)
@@ -392,7 +425,7 @@ config X86_X2APIC
 	  If you don't know what to do here, say N.
 
 config X86_MPPARSE
-	bool "Enable MPS table" if ACPI || SFI
+	bool "Enable MPS table" if ACPI || SFI || OF
 	default y
 	depends on X86_LOCAL_APIC
 	---help---
@@ -408,19 +441,6 @@ config X86_BIGSMP
 config GOLDFISH
        def_bool y
        depends on X86_GOLDFISH
-
-config RETPOLINE
-	bool "Avoid speculative indirect branches in kernel"
-	default y
-	---help---
-	  Compile kernel with the retpoline compiler options to guard against
-	  kernel-to-user data leaks by avoiding speculative indirect
-	  branches. Requires a compiler with -mindirect-branch=thunk-extern
-	  support for full protection. The kernel may run slower.
-
-	  Without compiler support, at least indirect branches in assembler
-	  code are eliminated. Since this includes the syscall entry path,
-	  it is not entirely pointless.
 
 if X86_32
 config X86_EXTENDED_PLATFORM
@@ -439,6 +459,7 @@ config X86_EXTENDED_PLATFORM
 		SGI 320/540 (Visual Workstation)
 		STA2X11-based (e.g. Northville)
 		Moorestown MID devices
+		Spreadtrum x86 devices
 
 	  If you have one of these systems, or if you want to build a
 	  generic distribution kernel, say Y here - otherwise say N.
@@ -458,6 +479,7 @@ config X86_EXTENDED_PLATFORM
 		Numascale NumaChip
 		ScaleMP vSMP
 		SGI Ultraviolet
+		Spreadtrum x86 devices
 
 	  If you have one of these systems, or if you want to build a
 	  generic distribution kernel, say Y here - otherwise say N.
@@ -525,6 +547,41 @@ config X86_INTEL_CE
 	  Select for the Intel CE media processor (CE4100) SOC.
 	  This option compiles in support for the CE4100 SOC for settop
 	  boxes and media devices.
+
+config X86_SPRD_ISOC
+	bool "Spreadtrum x86 platform"
+	depends on X86_IO_APIC
+	depends on X86_EXTENDED_PLATFORM
+	select ARCH_SPRD
+	select OF
+	select OF_EARLY_FLATTREE
+	select IRQ_DOMAIN
+	select COMMON_CLK
+	select CLKSRC_OF
+	select X86_DMA_INCOHERENT
+	---help---
+	  Select for the Spreadtrum x86 SoC (iSoC).
+	  This option compiles in support for the SPRD iSoC based systems.
+
+menu "Spreadtrum x86 Family"
+
+config SOC_IWHALE2
+	bool "Spreadtrum iwhale2 Soc Support"
+	depends on X86_SPRD_ISOC
+	help
+	  This enables Spreadtrum iwhale2 Soc and compatible support.
+	  You only need to enable this, if you want to support
+	  iwhale2 Soc.
+
+config SOC_ISHARKL2
+	bool "Spreadtrum isharkl2 Soc Support"
+	depends on X86_SPRD_ISOC
+	help
+	  This enables Spreadtrum isharkl2 Soc and compatible support.
+	  You only need to enable this, if you want to support
+	  isharkl2 Soc.
+
+endmenu
 
 config X86_INTEL_MID
 	bool "Intel MID platform support"
@@ -701,6 +758,20 @@ menuconfig HYPERVISOR_GUEST
 	  disabled, and Linux guest support won't be built in.
 
 if HYPERVISOR_GUEST
+
+config MOBILEVISOR
+	bool "Linux guest support for Mobile platform"
+	---help---
+	  Select to build support for Intel BaseIA VM guest related feature.
+	  Virtual Machine Monitor (VMM) is a hypervisor used to create
+	  and manage virtual machine environments that allow
+	  multiple software runtimes to execute on shared CPU cores.
+
+config MOBILEVISOR_DEBUG
+        bool "Mobilevisor debug"
+        depends on MOBILEVISOR
+        ---help---
+          Enable to debug mobilevisor and get info form VMM.
 
 config PARAVIRT
 	bool "Enable paravirtualization code"
@@ -976,6 +1047,15 @@ config X86_IO_APIC
 	def_bool y
 	depends on X86_LOCAL_APIC || X86_UP_IOAPIC
 
+config X86_DISABLE_LEGACY_PIC
+	bool "Disable legacy pic 8259 support"
+	default n
+	---help---
+		This option is for remove legacy pic 8259 support.
+		Say Yes to disable legacy pic and use a null pic driver.
+
+		If you don't know what to do here, say N.
+
 config X86_REROUTE_FOR_BROKEN_BOOT_IRQS
 	bool "Reroute for broken boot IRQs"
 	depends on X86_IO_APIC
@@ -1038,7 +1118,7 @@ config X86_MCE_THRESHOLD
 	def_bool y
 
 config X86_MCE_INJECT
-	depends on X86_MCE && X86_LOCAL_APIC
+	depends on X86_MCE
 	tristate "Machine check injector support"
 	---help---
 	  Provide support for injecting machine checks for testing purposes.
@@ -1567,6 +1647,27 @@ config X86_RESERVE_LOW
 
 	  Leave this to the default value of 64 if you are unsure.
 
+config FORCE_MAX_ZONEORDER
+        int "change force_max_zoneorder value"
+        default "11"
+        help
+          The kernel memory allocator divides physically contiguous memory
+          blocks into "zones", where each zone is a power of two number of
+          pages.  This option selects the largest power of two that the kernel
+          keeps in the memory allocator.  If you need to allocate very large
+          blocks of physically contiguous memory, then you may need to
+          increase this value.
+
+          This config option is actually maximum order plus one. For example,
+          a value of 11 means that the largest free memory block is 2^10 pages.
+
+          We make sure that we can allocate upto a HugePage size for each configuration.
+          Hence we have :
+                MAX_ORDER = (PMD_SHIFT - PAGE_SHIFT) + 1 => PAGE_SHIFT - 2
+
+          However for 4K, we choose a higher default value, 11 as opposed to 10, giving us
+          4M allocations matching the default size used by generic code.
+
 config MATH_EMULATION
 	bool
 	depends on MODIFY_LDT_SYSCALL
@@ -1674,6 +1775,17 @@ config X86_PAT
 	  spontaneous reboots) or a non-working video driver.
 
 	  If unsure, say Y.
+
+config X86_C6_TLB_IPI_OPT
+	bool "Enable MM IPI optimization with C6 TLB force flush"
+	default n
+	---help---
+		This option is for ucode which gurantee tlb is flushed for c6fs/c6ns.
+		X86 mm code assume to send tlb flush IPIs to all cpus, it's expensive
+		to wakeup c6 cpu. Say Yes to enable the optimization of sending ipi
+		to exclude c6 cores for power saving.
+
+		If you don't know what to do here, say N.
 
 config ARCH_USES_PG_UNCACHED
 	def_bool y
@@ -2348,6 +2460,52 @@ source "drivers/cpuidle/Kconfig"
 
 source "drivers/idle/Kconfig"
 
+#
+# X86 CPU DeepSleep drivers
+#
+
+config X86_SPRD_IWHALE2_LPC
+	bool "iWhale2 lowpower control"
+	depends on PM_SLEEP && X86_64
+	default n
+	---help---
+	Select this to enable iWhale2 lowpower control.
+	If not selected, deep and light sleep function will not be opened.
+
+config X86_SPRD_ISHARKL2_LPC
+        bool "iSharkl2 lowpower control"
+        depends on PM_SLEEP && X86_64
+        default n
+        ---help---
+        Select this to enable iSharkl2 lowpower control.
+        If not selected, deep and light sleep function will not be opened.
+
+config X86_32_SPRD_DEEPSLEEP
+	bool "GENERIC X86_32 DeepSleep Driver"
+	depends on PM_SLEEP && X86_32
+	default n
+	---help---
+	Select this to enable generic deepsleep driver for X86.
+	It provides a generic deepsleep driver whose deepsleep states are
+	configured.The deepsleep suspend backend is initialized by calling the
+	CPU operations init deepslep hook provided by architecture code.
+	In deepsleep state, the ahb/aph clk are off, both master and
+	peripherals are closed, chip enter lower power state,
+	only the static power consumption.
+
+config X86_64_SPRD_DEEPSLEEP
+	bool "GENERIC X86_64 DeepSleep Driver"
+	depends on PM_SLEEP && X86_64
+	default n
+	---help---
+	Select this to enable generic deepsleep driver for X86.
+	It provides a generic deepsleep driver whose deepsleep states are
+	configured.The deepsleep suspend backend is initialized by calling the
+	CPU operations init deepslep hook provided by architecture code.
+	In deepsleep state, the ahb/aph clk are off, both master and
+	peripherals are closed, chip enter lower power state,
+	only the static power consumption.
+
 endmenu
 
 
@@ -2685,6 +2843,10 @@ config COMPAT_FOR_U64_ALIGNMENT
 config SYSVIPC_COMPAT
 	def_bool y
 	depends on SYSVIPC
+
+config KEYS_COMPAT
+	def_bool y
+	depends on KEYS
 endif
 
 endmenu
@@ -2723,3 +2885,7 @@ source "crypto/Kconfig"
 source "arch/x86/kvm/Kconfig"
 
 source "lib/Kconfig"
+
+if MOBILEVISOR
+source "arch/x86/mobilevisor/Kconfig"
+endif

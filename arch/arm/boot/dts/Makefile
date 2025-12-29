@@ -1,3 +1,6 @@
+ifneq ($(ZTE_BOARD_NAME),)
+	dts-dirs += $(ZTE_BOARD_NAME)
+else
 ifeq ($(CONFIG_OF),y)
 
 dtb-$(CONFIG_ARCH_ALPINE) += \
@@ -572,6 +575,75 @@ dtb-$(CONFIG_ARCH_SPEAR3XX) += \
 	spear320-hmi.dtb
 dtb-$(CONFIG_ARCH_SPEAR6XX) += \
 	spear600-evb.dtb
+dtb-$(CONFIG_ARCH_SPRD)+= \
+	sp9830a-5h10-ga1.dtb \
+	sp9830a-7h10-ga1.dtb \
+	sp9850ka-1h10-native.dtb \
+	sp9850ka-1h10-trusty.dtb \
+	sp9850ka-1h10-cmcc.dtb \
+	sp9850ka-1h10-cmcc-tee.dtb \
+	sp9850ka-1h10-nativen.dtb \
+	sp9850ka-1h10-nativen-tee.dtb \
+	sp9850ka-1h10-cmccn.dtb \
+	sp9850ka-1h10-native-tee.dtb \
+	sp9850ka-1h10-gonative-tee.dtb \
+	sp9850ka-1h10-gonative-tee-no-fp.dtb \
+	sp9850ka-1h10-gofu.dtb\
+	sp9850ka-1h10-gofu-avb.dtb\
+	sp9850ka-1h10-gofu-no-fp.dtb\
+	sp9850ka-2c10-native.dtb \
+	sp9850ka-2c10-native-tee.dtb \
+	sp9850ka-2c10-native-tee-no-fp.dtb \
+	sp9850ka-2c10-cmcc.dtb \
+	sp9850ka-2c20-native.dtb \
+	sp9850ka-2c20-cmcc.dtb \
+	sp9850ka-2c20-cmcc-tee-no-fp.dtb \
+	sp9850ka-2c20-cmcc-tee.dtb \
+	sp9850ka-2c20-native-tee.dtb \
+	sp9850ka-2c30-native.dtb \
+	sp9850ka-2c30-sbs.dtb \
+	sp9850ka-2c30-cmcc.dtb \
+	sp9850ka-2c30-cmcc-tee-no-fp.dtb \
+	sp9850ka-2c30-cmcc-tee.dtb \
+	sp9850ka-2c30-native-tee.dtb \
+	sp9850ka-2c30-gonative-tee.dtb \
+	sp9850ka-2c10-cmcc-tee.dtb \
+	sp9850ka-2c10-cmcc-tee-no-fp.dtb \
+	sp7731e_vp.dtb \
+	sp7731e_zebu.dtb \
+	sp7731e_fpga.dtb \
+	sp7731e-1h10-native.dtb \
+	sp7731e-1h30-o-native.dtb \
+	sp7731e-1h10-native-fp.dtb \
+	sp7731e-1h30-o-native-fp.dtb \
+	sp7731e-1h20-native.dtb \
+	sp7731e-16c10-native.dtb \
+	sp7731e-14c20-native.dtb \
+	sp7731e-14c10-native.dtb \
+	sp9832e-1h10-go.dtb \
+	sp9832e-1h10-go-ll.dtb \
+	sp9832e-2c10-go.dtb \
+	sp9832e-10c10-go.dtb \
+	sp9832e-10c10-gofu.dtb \
+	sp9832e-1h10-gofu.dtb \
+	sp9832e-1h10-gofu-nofp.dtb \
+	sp9832e-1h10-gofu-ll.dtb \
+	sp9832e-1h10-gofu-avb.dtb \
+	sp9820e-1h10-native.dtb \
+	sp9820e-13c10-native.dtb \
+	sp9820e-5c10-native.dtb \
+	sp9820e-2c10-native.dtb \
+	sp9820e-1h10-kaios-native.dtb \
+	sp9820e-2h10-kaios-native.dtb \
+	sp9820e-13c10-kaios-native.dtb \
+	sp9820e-5c10-kaios-native.dtb \
+	sp9820e-2c10-kaios-native.dtb \
+	sp9820e-2h10-native.dtb \
+	sp9820e-17c10-native.dtb \
+	sp9863a-1h10-go-native.dtb \
+	sp9863a-3h10-go-native.dtb \
+	sp9863a-3c10-go-native.dtb
+
 dtb-$(CONFIG_ARCH_STI) += \
 	stih407-b2120.dtb \
 	stih410-b2120.dtb \
@@ -779,18 +851,29 @@ dtb-$(CONFIG_ARCH_MEDIATEK) += \
 dtb-$(CONFIG_ARCH_ZX) += zx296702-ad1.dtb
 endif
 
+dtbo-$(CONFIG_ARCH_SPRD) += \
+	sp9832e-1h10-gofu-overlay.dtbo \
+  	sp7731e-1h10-overlay.dtbo \
+	sp7731e-1h20-overlay.dtbo \
+	sp9832e-1h10-go-overlay.dtbo \
+	sp9863a-1h10-go-overlay.dtbo \
+	sp9863a-3h10-go-overlay.dtbo \
+	sp9863a-3c10-go-overlay.dtbo
+endif
+
 dtstree		:= $(srctree)/$(src)
 dtb-$(CONFIG_OF_ALL_DTBS) := $(patsubst $(dtstree)/%.dts,%.dtb, $(wildcard $(dtstree)/*.dts))
 
 DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))
 ifneq ($(DTB_NAMES),)
-DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
+DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES)) $(dtbo-y)
 else
-DTB_LIST := $(dtb-y)
+DTB_LIST := $(dtb-y) $(dtbo-y)
 endif
 
 targets += dtbs dtbs_install
 targets += $(DTB_LIST)
 
 always		:= $(DTB_LIST)
-clean-files	:= *.dtb
+subdir-y	:= $(dts-dirs)
+clean-files	:= *.dtb *.dtbo

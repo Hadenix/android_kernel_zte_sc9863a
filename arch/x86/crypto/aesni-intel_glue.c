@@ -77,7 +77,7 @@ struct aesni_lrw_ctx {
 
 struct aesni_xts_ctx {
 	u8 raw_tweak_ctx[sizeof(struct crypto_aes_ctx) + AESNI_ALIGN - 1];
-	u8 raw_crypt_ctx[sizeof(struct crypto_aes_ctx) + AESNI_ALIGN - 1];
+	u8 raw_crypt_ctx[sizeof(struct crypto_aes_ctx) + AESNI_ALIGN - 1] __attribute__((aligned(16)));
 };
 
 asmlinkage int aesni_set_key(struct crypto_aes_ctx *ctx, const u8 *in_key,
@@ -965,7 +965,7 @@ static int helper_rfc4106_encrypt(struct aead_request *req)
 
 	if (sg_is_last(req->src) &&
 	    req->src->offset + req->src->length <= PAGE_SIZE &&
-	    sg_is_last(req->dst) && req->dst->length &&
+	    sg_is_last(req->dst) &&
 	    req->dst->offset + req->dst->length <= PAGE_SIZE) {
 		one_entry_in_sg = 1;
 		scatterwalk_start(&src_sg_walk, req->src);
@@ -1139,8 +1139,8 @@ static struct crypto_alg aesni_algs[] = { {
 			.cia_min_keysize	= AES_MIN_KEY_SIZE,
 			.cia_max_keysize	= AES_MAX_KEY_SIZE,
 			.cia_setkey		= aes_set_key,
-			.cia_encrypt		= aes_encrypt,
-			.cia_decrypt		= aes_decrypt
+			.cia_encrypt		= __aes_encrypt,
+			.cia_decrypt		= __aes_decrypt
 		}
 	}
 }, {
@@ -1158,8 +1158,8 @@ static struct crypto_alg aesni_algs[] = { {
 			.cia_min_keysize	= AES_MIN_KEY_SIZE,
 			.cia_max_keysize	= AES_MAX_KEY_SIZE,
 			.cia_setkey		= aes_set_key,
-			.cia_encrypt		= __aes_encrypt,
-			.cia_decrypt		= __aes_decrypt
+			.cia_encrypt		= aes_encrypt,
+			.cia_decrypt		= aes_decrypt
 		}
 	}
 }, {
@@ -1520,7 +1520,7 @@ static void __exit aesni_exit(void)
 	crypto_fpu_exit();
 }
 
-late_initcall(aesni_init);
+module_init(aesni_init);
 module_exit(aesni_exit);
 
 MODULE_DESCRIPTION("Rijndael (AES) Cipher Algorithm, Intel AES-NI instructions optimized");

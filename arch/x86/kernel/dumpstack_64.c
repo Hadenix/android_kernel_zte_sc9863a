@@ -339,6 +339,33 @@ void show_regs(struct pt_regs *regs)
 			else
 				pr_cont("%02x ", c);
 		}
+		ip = (u8 *)regs->ip - code_prologue;
+		printk(KERN_DEFAULT "\n2nd dump ip %p len %x\n", ip, code_len);
+		for (i = 0; i < code_len; i++, ip++) {
+			if (ip < (u8 *)PAGE_OFFSET ||
+					probe_kernel_address(ip, c)) {
+				pr_cont(" Bad RIP value.");
+				break;
+			}
+			if (ip == (u8 *)regs->ip)
+				pr_cont("<%02x> ", c);
+			else
+				pr_cont("%02x ", c);
+		}
+		wbinvd();
+		ip = (u8 *)regs->ip - code_prologue;
+		printk(KERN_DEFAULT "\n3rd dump,invalidate cache\n");
+		for (i = 0; i < code_len; i++, ip++) {
+			if (ip < (u8 *)PAGE_OFFSET ||
+					probe_kernel_address(ip, c)) {
+				pr_cont(" Bad RIP value.");
+				break;
+			}
+			if (ip == (u8 *)regs->ip)
+				pr_cont("<%02x> ", c);
+			else
+				pr_cont("%02x ", c);
+		}
 	}
 	pr_cont("\n");
 }

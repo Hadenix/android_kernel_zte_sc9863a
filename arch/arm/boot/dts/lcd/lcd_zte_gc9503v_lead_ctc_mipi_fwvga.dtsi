@@ -1,0 +1,85 @@
+/ { lcds {
+	lcd_gc9503v_lead_mipi_wvga: lcd77015@77015 {
+		zte,lcd-init-code-version = "20190115";
+		zte,lcd-backlight-register-bit-length = <0x08>;
+		zte,lcd-cabc-default-value = <0x02>;
+		zte,lcd-cabc-off-command = [23 00 00 02 55 00];
+		zte,lcd-cabc-low-command = [23 00 00 02 55 01];
+		zte,lcd-cabc-medium-command = [23 00 00 02 55 02];
+		zte,lcd-cabc-high-command = [23 00 00 02 55 03];
+		zte,lcm_backlight_curve_mode = "lcd_brightness_max_350_lux";
+
+		work-mode = <1>;
+		bpp = <24>;
+		lane-number = <2>;
+
+		need-check-esd = <0>;
+		esd-timeout = <2000>;
+
+		fps = <60>;
+		width-mm = <55>;
+		height-mm = <94>;
+		panel-name = "lcd_gc9503v_lead_ctc_mipi_wvga";
+
+		power-on-sequence = <
+					32  1  10
+					32  0  20
+					32  1  100
+					>;
+		power-off-sequence = <
+					32  1  5
+					>;
+
+		init-data = [
+			23 78 00 02 11 00
+			39 00 00 03 B8 00 02
+			23 00 00 02 51 00
+			23 00 00 02 53 2C
+			23 00 00 02 55 01
+			23 0a 00 02 29 00
+			];
+		sleep-in = [
+			23 0a 00 02 28 00
+			23 78 00 02 10 00
+			39 00 00 06 F0 55 aa 52 08 00
+			23 00 00 02 C2 CE
+			23 00 00 02 C3 cD
+			23 00 00 02 C6 FC
+			23 00 00 02 CD 64
+			23 00 00 02 C9 CD
+			39 00 00 03 f6 5A 87
+			39 00 00 04 fd aa aa 0a
+			39 00 00 03 fe 6a 0a
+			39 00 00 03 78 2a aa
+			39 00 00 03 92 17 08
+			39 00 00 03 77 aa 2a
+			39 00 00 03 76 aa aa
+			23 00 00 02 af 02
+			];
+		sleep-out = [
+			13 78 00 01 11
+			13 0a 00 01 29
+			];
+
+		display-timings {
+			clock-frequency = <500000>;
+			hactive = <480>;
+			vactive = <800>;
+			hback-porch = <70>;
+			hfront-porch = <80>;
+			vback-porch = <20>;
+			vfront-porch = <18>;
+			hsync-len = <10>;
+			vsync-len = <10>;
+		};
+		oled-backlight {
+			default-brightness = <102>;
+			max-level = <255>;
+			brightness-levels = [
+				23 00 00 02 51 00
+				23 00 00 02 53 2c
+			];
+		};
+	};
+};};
+

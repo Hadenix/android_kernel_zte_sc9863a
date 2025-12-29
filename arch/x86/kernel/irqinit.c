@@ -8,6 +8,7 @@
 #include <linux/random.h>
 #include <linux/kprobes.h>
 #include <linux/init.h>
+#include <linux/irqchip.h>
 #include <linux/kernel_stat.h>
 #include <linux/device.h>
 #include <linux/bitops.h>
@@ -25,6 +26,8 @@
 #include <asm/i8259.h>
 #include <asm/traps.h>
 #include <asm/prom.h>
+
+#include <asm/mv/mobilevisor.h>
 
 /*
  * ISA PIC or low IO-APIC triggered (INTA-cycle or APIC) interrupts:
@@ -51,7 +54,7 @@ static struct irqaction irq2 = {
 	.flags = IRQF_NO_THREAD,
 };
 
-DEFINE_PER_CPU_USER_MAPPED(vector_irq_t, vector_irq) = {
+DEFINE_PER_CPU(vector_irq_t, vector_irq) = {
 	[0 ... NR_VECTORS - 1] = VECTOR_UNUSED,
 };
 
@@ -106,13 +109,15 @@ static void __init smp_intr_init(void)
 	 * The reschedule interrupt is a CPU-to-CPU reschedule-helper
 	 * IPI, driven by wakeup.
 	 */
-	alloc_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
+	alloc_intr_gate(x86_mv_map_vector(RESCHEDULE_VECTOR),
+			reschedule_interrupt);
 
 	/* IPI for generic function call */
-	alloc_intr_gate(CALL_FUNCTION_VECTOR, call_function_interrupt);
+	alloc_intr_gate(x86_mv_map_vector(CALL_FUNCTION_VECTOR),
+			call_function_interrupt);
 
 	/* IPI for generic single function call */
-	alloc_intr_gate(CALL_FUNCTION_SINGLE_VECTOR,
+	alloc_intr_gate(x86_mv_map_vector(CALL_FUNCTION_SINGLE_VECTOR),
 			call_function_single_interrupt);
 
 	/* Low priority IPI to cleanup after moving an irq */
@@ -120,7 +125,8 @@ static void __init smp_intr_init(void)
 	set_bit(IRQ_MOVE_CLEANUP_VECTOR, used_vectors);
 
 	/* IPI used for rebooting/stopping */
-	alloc_intr_gate(REBOOT_VECTOR, reboot_interrupt);
+	alloc_intr_gate(x86_mv_map_vector(REBOOT_VECTOR),
+			reboot_interrupt);
 #endif /* CONFIG_SMP */
 }
 
@@ -141,7 +147,8 @@ static void __init apic_intr_init(void)
 
 #ifdef CONFIG_X86_LOCAL_APIC
 	/* self generated IPI for local APIC timer */
-	alloc_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
+	alloc_intr_gate(x86_mv_map_vector(LOCAL_TIMER_VECTOR),
+			apic_timer_interrupt);
 
 	/* IPI for X86 platform specific use */
 	alloc_intr_gate(X86_PLATFORM_IPI_VECTOR, x86_platform_ipi);
@@ -158,7 +165,7 @@ static void __init apic_intr_init(void)
 
 	/* IRQ work interrupts: */
 # ifdef CONFIG_IRQ_WORK
-	alloc_intr_gate(IRQ_WORK_VECTOR, irq_work_interrupt);
+	alloc_intr_gate(x86_mv_map_vector(IRQ_WORK_VECTOR), irq_work_interrupt);
 # endif
 
 #endif
@@ -197,5 +204,8 @@ void __init native_init_IRQ(void)
 
 #ifdef CONFIG_X86_32
 	irq_ctx_init(smp_processor_id());
+#endif
+#ifdef CONFIG_OF
+	irqchip_init();
 #endif
 }

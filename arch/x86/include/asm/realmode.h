@@ -56,6 +56,9 @@ extern unsigned char startup_32_smp[];
 extern unsigned char boot_gdt[];
 #else
 extern unsigned char secondary_startup_64[];
+#ifdef CONFIG_MOBILEVISOR
+extern unsigned char mv_secondary_startup_64[];
+#endif
 #endif
 
 void reserve_real_mode(void);

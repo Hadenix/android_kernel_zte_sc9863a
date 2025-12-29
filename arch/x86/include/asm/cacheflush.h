@@ -81,6 +81,7 @@ int set_pages_array_wb(struct page **pages, int addrinarray);
 
 int set_pages_uc(struct page *page, int numpages);
 int set_pages_wb(struct page *page, int numpages);
+int set_pages_wc(struct page *page, int numpages);
 int set_pages_x(struct page *page, int numpages);
 int set_pages_nx(struct page *page, int numpages);
 int set_pages_ro(struct page *page, int numpages);
@@ -102,6 +103,13 @@ int rodata_test(void);
 static inline int rodata_test(void)
 {
 	return 0;
+}
+#endif
+
+#ifdef CONFIG_X86_DMA_INCOHERENT
+static inline void pages_sync(struct page *page, unsigned long offset, size_t size)
+{
+	clflush_cache_range(page_address(page) + offset, size);
 }
 #endif
 

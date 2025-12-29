@@ -415,7 +415,12 @@ END(vectors)
 	mov	x0, sp
 	mov	x1, #\reason
 	mrs	x2, esr_el1
+#ifdef CONFIG_SPRD_WHALE2_ISP_REGISTER_ACCESS_RETRY
+	bl	bad_mode
+	kernel_exit el
+#else
 	b	bad_mode
+#endif
 	.endm
 
 el0_sync_invalid:
@@ -648,6 +653,9 @@ el0_sync_compat:
 	cmp	x24, #ESR_ELx_EC_BREAKPT_LOW	// debug exception in EL0
 	b.ge	el0_dbg
 	b	el0_inv
+el0_svc_dbt:
+	mov w27, #1
+	str w27, [tsk, #TI_DBT_SYSCALL]
 el0_svc_compat:
 	/*
 	 * AArch32 syscall handling
@@ -825,6 +833,7 @@ ENDPROC(cpu_switch_to)
  */
 ret_fast_syscall:
 	disable_irq				// disable interrupts
+	str wzr, [tsk, #TI_DBT_SYSCALL]
 	str	x0, [sp, #S_X0]			// returned x0
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for syscall tracing
@@ -890,6 +899,9 @@ ENDPROC(ret_from_fork)
  */
 	.align	6
 el0_svc:
+#ifdef CONFIG_DBT
+	tbnz	w8, #31, el0_svc_dbt		// hack to use 32-bit syscalls instead
+#endif
 	adrp	stbl, sys_call_table		// load syscall table pointer
 	uxtw	scno, w8			// syscall number in w8
 	mov	sc_nr, #__NR_syscalls
@@ -944,6 +956,7 @@ __sys_trace:
 __sys_trace_return:
 	str	x0, [sp, #S_X0]			// save returned x0
 __sys_trace_return_skipped:
+	str wzr, [tsk, #TI_DBT_SYSCALL]
 	mov	x0, sp
 	bl	syscall_trace_exit
 	b	ret_to_user
