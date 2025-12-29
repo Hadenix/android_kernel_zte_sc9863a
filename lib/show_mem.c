@@ -42,6 +42,9 @@ void show_mem(unsigned int filter)
 #ifdef CONFIG_CMA
 	printk("%lu pages cma reserved\n", totalcma_pages);
 #endif
+#ifdef CONFIG_DETOUR_MEM
+	printk("%lu pages detour-mem\n", totaldetour_pages);
+#endif
 #ifdef CONFIG_QUICKLIST
 	printk("%lu pages in pagetable cache\n",
 		quicklist_total_size());

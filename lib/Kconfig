@@ -530,6 +530,14 @@ config ARCH_HAS_PMEM_API
 
 config ARCH_HAS_MMIO_FLUSH
 	bool
+#
+# Enhanced show meminfo support is selected if needed
+#
+config E_SHOW_MEM
+	boolean "Enhanced show memory"
+	default y
+	help
+	  Enable mem info show for ION, Mali, Zram, page_recorder, etc.
 
 config STACKDEPOT
 	bool
