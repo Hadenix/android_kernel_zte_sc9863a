@@ -18,11 +18,14 @@
 #include <linux/clk.h>
 #include <linux/console.h>
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
+#include <linux/dma/sprd_dma.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_dma.h>
 #include <linux/platform_device.h>
 #include <linux/serial_core.h>
 #include <linux/serial.h>
@@ -36,7 +39,7 @@
 #define SPRD_FIFO_SIZE		128
 #define SPRD_DEF_RATE		26000000
 #define SPRD_BAUD_IO_LIMIT	3000000
-#define SPRD_TIMEOUT		256
+#define SPRD_TIMEOUT		256000
 
 /* the offset of serial registers and BITs for them */
 /* data registers */
@@ -63,6 +66,7 @@
 
 /* interrupt clear register */
 #define SPRD_ICLR		0x0014
+#define SPRD_ICLR_TIMEOUT	BIT(13)
 
 /* line control register */
 #define SPRD_LCR		0x0018
@@ -80,6 +84,7 @@
 
 /* control register 1 */
 #define SPRD_CTL1			0x001C
+#define DMA_EN			BIT(15)
 #define RX_HW_FLOW_CTL_THLD	BIT(6)
 #define RX_HW_FLOW_CTL_EN	BIT(7)
 #define TX_HW_FLOW_CTL_EN	BIT(8)
@@ -88,6 +93,7 @@
 
 /* fifo threshold register */
 #define SPRD_CTL2		0x0020
+#define SPRD_TX_FIFO_FULL	0x20
 #define THLD_TX_EMPTY	0x40
 #define THLD_RX_FULL	0x40
 
@@ -112,10 +118,25 @@ struct reg_backup {
 	u32 dspwait;
 };
 
+struct sprd_uart_dma {
+	bool enable;
+	bool tx_start;
+	u32 tx_dev_id;
+	u32 tx_len;
+	dma_addr_t tx_dma;
+	struct dma_chan *tx_chn;
+
+	void (*stop_tx)(struct uart_port *);
+	void (*start_tx)(struct uart_port *);
+	void (*tx_dma_config)(struct uart_port *);
+};
+
 struct sprd_uart_port {
 	struct uart_port port;
 	struct reg_backup reg_bak;
 	char name[16];
+	struct clk  *clk;
+	struct sprd_uart_dma dma;
 };
 
 static struct sprd_uart_port *sprd_port[UART_NR_MAX];
@@ -165,12 +186,18 @@ static void sprd_stop_tx(struct uart_port *port)
 
 static void sprd_start_tx(struct uart_port *port)
 {
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
 	unsigned int ien;
 
-	ien = serial_in(port, SPRD_IEN);
-	if (!(ien & SPRD_IEN_TX_EMPTY)) {
-		ien |= SPRD_IEN_TX_EMPTY;
-		serial_out(port, SPRD_IEN, ien);
+	if (sp->dma.enable) {
+		sp->dma.start_tx(port);
+	} else {
+		ien = serial_in(port, SPRD_IEN);
+		if (!(ien & SPRD_IEN_TX_EMPTY)) {
+			ien |= SPRD_IEN_TX_EMPTY;
+			serial_out(port, SPRD_IEN, ien);
+		}
 	}
 }
 
@@ -250,6 +277,155 @@ static inline void sprd_rx(struct uart_port *port)
 	tty_flip_buffer_push(tty);
 }
 
+static  void sprd_dma_enable(struct uart_port *port, bool enable)
+{
+	u32 val = serial_in(port, SPRD_CTL1);
+
+	if (enable)
+		val |= DMA_EN;
+	else
+		val &= ~DMA_EN;
+
+	serial_out(port, SPRD_CTL1, val);
+}
+
+static void sprd_stop_dma_tx(struct uart_port *port)
+{
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+
+	sprd_dma_enable(port, false);
+	sp->dma.tx_start = false;
+}
+
+static void sprd_tx_buf_remap(struct uart_port *port)
+{
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	struct circ_buf *xmit = &port->state->xmit;
+
+	sp->dma.tx_len = CIRC_CNT_TO_END(xmit->head, xmit->tail,
+					 UART_XMIT_SIZE);
+	sp->dma.tx_dma = dma_map_single(port->dev,
+					(void *)&(xmit->buf[xmit->tail]),
+					sp->dma.tx_len, DMA_TO_DEVICE);
+	if (dma_mapping_error(port->dev, sp->dma.tx_dma)) {
+		dev_err(port->dev, " serial dma map tx_buf error !\n");
+		return;
+	}
+}
+
+static void sprd_uart_dma_tx_callback(void *data)
+{
+	struct uart_port *port = (struct uart_port *)data;
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	struct circ_buf *xmit = &port->state->xmit;
+	unsigned long flags;
+
+	dma_unmap_single(port->dev, sp->dma.tx_dma,
+		sp->dma.tx_len, DMA_TO_DEVICE);
+	spin_lock_irqsave(&port->lock, flags);
+	xmit->tail = (xmit->tail + sp->dma.tx_len) & (UART_XMIT_SIZE - 1);
+	port->icount.tx += sp->dma.tx_len;
+
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+		uart_write_wakeup(port);
+	spin_unlock_irqrestore(&port->lock, flags);
+
+	if (uart_circ_empty(xmit)) {
+		sprd_dma_enable(port, false);
+		sprd_stop_dma_tx(port);
+	} else {
+		sprd_tx_buf_remap(port);
+		sp->dma.tx_dma_config(port);
+	}
+}
+
+static void sprd_tx_dma_config(struct uart_port *port)
+{
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	u32 fragmens_len = sp->dma.tx_len > SPRD_TX_FIFO_FULL ?
+			SPRD_TX_FIFO_FULL : sp->dma.tx_len;
+	struct dma_async_tx_descriptor *dma_des;
+	struct sprd_uart_dma *dma = &sp->dma;
+	struct dma_chan *tx_chn = dma->tx_chn;
+	struct dma_device *dma_dev = tx_chn->device;
+	struct sprd_dma_cfg tx_dma_cfg = {
+		.datawidth = BYTE_WIDTH,
+		.fragmens_len = fragmens_len,
+		.block_len = dma->tx_len,
+		.transcation_len = dma->tx_len,
+		.src_step = 1,
+		.des_step = 0,
+		.src_addr = dma->tx_dma,
+		.des_addr = port->mapbase + SPRD_TXD,
+		.req_mode = FRAG_REQ_MODE,
+		.irq_mode = TRANS_DONE,
+		.dev_id = dma->tx_dev_id,
+		.is_end = 1,
+	};
+
+	if (dmaengine_slave_config(tx_chn, &tx_dma_cfg.config) < 0) {
+		dev_err(port->dev, "dma tx config error\n");
+		return;
+	}
+
+	dma_des = dma_dev->device_prep_dma_memcpy(tx_chn, 0, 0, 0,
+						  DMA_CFG_FLAG |
+						  DMA_HARDWARE_FLAG);
+	if (!dma_des) {
+		dev_err(port->dev, "tx dma memcpy is failed\n");
+		return;
+	}
+
+	dma_des->callback = sprd_uart_dma_tx_callback;
+	dma_des->callback_param = (void *)port;
+	dmaengine_submit(dma_des);
+}
+
+static int sprd_request_dma(struct uart_port *port)
+{
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	struct device_node *np = port->dev->of_node;
+
+	sp->dma.tx_chn = of_dma_request_slave_channel(np, "tx_chn");
+	if (IS_ERR(sp->dma.tx_chn)) {
+		dev_err(port->dev, "request TX DMA channel failed\n");
+		return PTR_ERR(sp->dma.tx_chn);
+	}
+
+	return 0;
+}
+
+static void sprd_dma_tx_chars(struct uart_port *port)
+{
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	struct circ_buf *xmit = &port->state->xmit;
+
+	if (port->x_char) {
+		serial_out(port, SPRD_TXD, port->x_char);
+		port->icount.tx++;
+		port->x_char = 0;
+		return;
+	}
+
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
+		sprd_stop_dma_tx(port);
+		return;
+	}
+
+	if (!sp->dma.tx_start) {
+		sprd_tx_buf_remap(port);
+		sprd_tx_dma_config(port);
+		sp->dma.tx_start = true;
+		sprd_dma_enable(port, true);
+	}
+}
+
 static inline void sprd_tx(struct uart_port *port)
 {
 	struct circ_buf *xmit = &port->state->xmit;
@@ -297,8 +473,10 @@ static irqreturn_t sprd_handle_irq(int irq, void *dev_id)
 		spin_unlock(&port->lock);
 		return IRQ_NONE;
 	}
-
-	serial_out(port, SPRD_ICLR, ~0);
+	if (ims & SPRD_IMSR_TIMEOUT)
+		serial_out(port, SPRD_ICLR, (u32)SPRD_ICLR_TIMEOUT);
+	else
+		serial_out(port, SPRD_ICLR, ~(u32)SPRD_ICLR_TIMEOUT);
 
 	if (ims & (SPRD_IMSR_RX_FIFO_FULL |
 		SPRD_IMSR_BREAK_DETECT | SPRD_IMSR_TIMEOUT))
@@ -350,6 +528,12 @@ static int sprd_startup(struct uart_port *port)
 	fc |= RX_TOUT_THLD_DEF | RX_HFC_THLD_DEF;
 	serial_out(port, SPRD_CTL1, fc);
 
+	if (sp->dma.enable) {
+		ret = sprd_request_dma(port);
+		if (ret)
+			return ret;
+	}
+
 	/* enable interrupt */
 	spin_lock_irqsave(&port->lock, flags);
 	ien = serial_in(port, SPRD_IEN);
@@ -362,6 +546,13 @@ static int sprd_startup(struct uart_port *port)
 
 static void sprd_shutdown(struct uart_port *port)
 {
+	struct sprd_uart_port *sp = container_of(port, struct sprd_uart_port,
+						 port);
+	struct dma_chan *tx_chn = sp->dma.tx_chn;
+
+	if (sp->dma.enable)
+		dma_release_channel(tx_chn);
+
 	serial_out(port, SPRD_IEN, 0);
 	serial_out(port, SPRD_ICLR, ~0);
 	devm_free_irq(port->dev, port->irq, port);
@@ -378,7 +569,7 @@ static void sprd_set_termios(struct uart_port *port,
 	/* ask the core to calculate the divisor for us */
 	baud = uart_get_baud_rate(port, termios, old, 0, SPRD_BAUD_IO_LIMIT);
 
-	quot = (unsigned int)((port->uartclk + baud / 2) / baud);
+	quot = (unsigned int)(port->uartclk / baud);
 
 	/* set data length */
 	switch (termios->c_cflag & CSIZE) {
@@ -498,6 +689,22 @@ static int sprd_verify_port(struct uart_port *port,
 	return 0;
 }
 
+static void sprd_pm(struct uart_port *port, unsigned int state,
+		unsigned int oldstate)
+{
+	struct sprd_uart_port *sup
+		= container_of(port, struct sprd_uart_port, port);
+
+	switch (state) {
+	case UART_PM_STATE_ON:
+		clk_enable(sup->clk);
+		break;
+	case UART_PM_STATE_OFF:
+		clk_disable(sup->clk);
+		break;
+	}
+}
+
 static struct uart_ops serial_sprd_ops = {
 	.tx_empty = sprd_tx_empty,
 	.get_mctrl = sprd_get_mctrl,
@@ -514,6 +721,7 @@ static struct uart_ops serial_sprd_ops = {
 	.request_port = sprd_request_port,
 	.config_port = sprd_config_port,
 	.verify_port = sprd_verify_port,
+	.pm = sprd_pm,
 };
 
 #ifdef CONFIG_SERIAL_SPRD_CONSOLE
@@ -626,7 +834,9 @@ static int __init sprd_early_console_setup(
 }
 
 EARLYCON_DECLARE(sprd_serial, sprd_early_console_setup);
-OF_EARLYCON_DECLARE(sprd_serial, "sprd,sc9836-uart",
+OF_EARLYCON_DECLARE(sprd_serial_sc9836, "sprd,sc9836-uart",
+		    sprd_early_console_setup);
+OF_EARLYCON_DECLARE(sprd_serial_sc9838, "sprd,sc9838-uart",
 		    sprd_early_console_setup);
 
 #else /* !CONFIG_SERIAL_SPRD_CONSOLE */
@@ -672,6 +882,7 @@ static int sprd_remove(struct platform_device *dev)
 
 	if (sup) {
 		uart_remove_one_port(&sprd_uart_driver, &sup->port);
+		clk_unprepare(sup->clk);
 		sprd_port[sup->port.line] = NULL;
 		sprd_ports_num--;
 	}
@@ -682,11 +893,81 @@ static int sprd_remove(struct platform_device *dev)
 	return 0;
 }
 
+static int sprd_clk_init(struct uart_port *uport)
+{
+	struct clk *clk_uart, *clk_parent;
+	struct device_node *np = uport->dev->of_node;
+	struct sprd_uart_port *u = sprd_port[uport->line];
+
+	clk_uart = of_clk_get_by_name(np, "uart");
+	if (IS_ERR(clk_uart)) {
+		dev_warn(uport->dev,
+			"uart%d can't get the clock dts config: uart\n",
+			uport->line);
+		clk_uart = NULL;
+	}
+
+	clk_parent = of_clk_get_by_name(np, "source");
+	if (IS_ERR(clk_parent)) {
+		dev_warn(uport->dev,
+			"uart%d can't get the clock dts config: source\n",
+			uport->line);
+		clk_parent = NULL;
+	}
+
+	clk_set_parent(clk_uart, clk_parent);
+	uport->uartclk = clk_get_rate(clk_uart);
+
+	dev_err(uport->dev, "uart%d set source clock is %d\n",
+		uport->line, uport->uartclk);
+
+	if (!uport->uartclk) {
+		uport->uartclk = 26000000;
+		dev_warn(uport->dev, "Can't find clk-uart -- switch to FPGA mode!\n");
+	}
+
+	u->clk = of_clk_get_by_name(np, "enable");
+
+	if (IS_ERR(u->clk)) {
+		dev_warn(uport->dev,
+			"uart%d can't get the clock dts config: enable\n",
+			uport->line);
+		u->clk = NULL;
+	}
+
+	clk_prepare(u->clk);
+	return 0;
+}
+
+static void sprd_uart_dma_init(struct platform_device *pdev,
+			       struct uart_port *up)
+{
+	struct sprd_uart_port *sp = container_of(up, struct sprd_uart_port,
+						 port);
+
+	sp->dma.enable = of_property_read_bool(pdev->dev.of_node, "dmas");
+	if (!sp->dma.enable) {
+		dev_info(&pdev->dev, "do not support DMA transfer\n");
+		return;
+	}
+
+	if (of_property_read_u32(pdev->dev.of_node, "sprd,dma-tx",
+				 &sp->dma.tx_dev_id)) {
+		dev_err(&pdev->dev, "cannot get serial dma hardware request number\n");
+		sp->dma.enable = false;
+		return;
+	}
+
+	sp->dma.tx_start = false;
+	sp->dma.start_tx = sprd_dma_tx_chars;
+	sp->dma.stop_tx = sprd_stop_dma_tx;
+	sp->dma.tx_dma_config = sprd_tx_dma_config;
+}
+
 static int sprd_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct uart_port *up;
-	struct clk *clk;
 	int irq;
 	int index;
 	int ret;
@@ -715,9 +996,7 @@ static int sprd_probe(struct platform_device *pdev)
 	up->ops = &serial_sprd_ops;
 	up->flags = UPF_BOOT_AUTOCONF;
 
-	clk = devm_clk_get(&pdev->dev, NULL);
-	if (!IS_ERR_OR_NULL(clk))
-		up->uartclk = clk_get_rate(clk);
+	sprd_clk_init(up);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
@@ -736,6 +1015,8 @@ static int sprd_probe(struct platform_device *pdev)
 	}
 	up->irq = irq;
 
+	sprd_uart_dma_init(pdev, up);
+
 	if (!sprd_ports_num) {
 		ret = uart_register_driver(&sprd_uart_driver);
 		if (ret < 0) {
@@ -752,7 +1033,6 @@ static int sprd_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, up);
-
 	return ret;
 }
 
@@ -780,6 +1060,7 @@ static SIMPLE_DEV_PM_OPS(sprd_pm_ops, sprd_suspend, sprd_resume);
 
 static const struct of_device_id serial_ids[] = {
 	{.compatible = "sprd,sc9836-uart",},
+	{.compatible = "sprd,sc9838-uart",},
 	{}
 };
 MODULE_DEVICE_TABLE(of, serial_ids);

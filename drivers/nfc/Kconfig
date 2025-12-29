@@ -2,9 +2,6 @@
 # Near Field Communication (NFC) devices
 #
 
-menu "Near Field Communication (NFC) devices"
-	depends on NFC
-
 config NFC_PN533
 	tristate "NXP PN533 USB driver"
 	depends on USB
@@ -76,4 +73,6 @@ source "drivers/nfc/st21nfca/Kconfig"
 source "drivers/nfc/st-nci/Kconfig"
 source "drivers/nfc/nxp-nci/Kconfig"
 source "drivers/nfc/s3fwrn5/Kconfig"
-endmenu
+source "drivers/nfc/sec_nfc/Kconfig"
+source "drivers/nfc/pn80t/Kconfig"
+source "drivers/nfc/pn5xx-i2c/Kconfig"

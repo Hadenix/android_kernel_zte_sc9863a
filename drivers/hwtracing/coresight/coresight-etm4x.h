@@ -143,6 +143,7 @@
 #define ETM_MAX_SS_CMP			8
 
 #define ETM_ARCH_V4			0x40
+#define ETM_ARCH_V4_2			0x42
 #define ETMv4_SYNC_MASK			0x1F
 #define ETM_CYC_THRESHOLD_MASK		0xFFF
 #define ETMv4_EVENT_MASK		0xFF
@@ -182,9 +183,14 @@
 /**
  * struct etm4_drvdata - specifics associated to an ETM component
  * @base:       Memory mapped base address for this component.
+ * @ts_base:	 Memory mapped base address for timestamp.
  * @dev:        The device entity associated to this component.
  * @csdev:      Component vitals needed by the framework.
+ * @clk_cs:	 The coresight clock.
+ * @clk_cs_src: The coresight clock source select.
  * @spinlock:   Only one at a time pls.
+ * @nb:		hotplog notify info.
+ * @pm_nb:	pm notify info.
  * @cpu:        The cpu this component is affined to.
  * @arch:       ETM version number.
  * @enable:	Is this ETM currently tracing.
@@ -283,9 +289,14 @@
  */
 struct etmv4_drvdata {
 	void __iomem			*base;
+	void __iomem			*ts_base;
 	struct device			*dev;
 	struct coresight_device		*csdev;
+	struct clk			*clk_cs;
+	struct clk			*clk_cs_src;
 	spinlock_t			spinlock;
+	struct notifier_block		nb;
+	struct notifier_block		pm_nb;
 	int				cpu;
 	u8				arch;
 	bool				enable;

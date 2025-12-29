@@ -432,6 +432,18 @@ static struct attribute *gpiochip_attrs[] = {
 };
 ATTRIBUTE_GROUPS(gpiochip);
 
+static unsigned int gpio_autotest;
+
+static __init int gpio_autotest_mode(char *str)
+{
+	if (strcmp(str, "autotest"))
+		gpio_autotest = 0;
+	else
+		gpio_autotest = 1;
+
+	return 0;
+}
+__setup("androidboot.mode=", gpio_autotest_mode);
 /*
  * /sys/class/gpio/export ... write-only
  *	integer N ... number of GPIO to export (full access)
@@ -461,18 +473,23 @@ static ssize_t export_store(struct class *class,
 	 * request and export were done by on behalf of userspace, so
 	 * they may be undone on its behalf too.
 	 */
-
-	status = gpiod_request(desc, "sysfs");
-	if (status < 0) {
-		if (status == -EPROBE_DEFER)
-			status = -ENODEV;
-		goto done;
+	if ((!!gpio_autotest && !gpiochip_is_requested(desc->chip, gpio)) ||
+		(gpio_autotest == 0)) {
+		status = gpiod_request(desc, "sysfs");
+		if (status < 0) {
+			if (status == -EPROBE_DEFER)
+				status = -ENODEV;
+			goto done;
+		}
 	}
-	status = gpiod_export(desc, true);
-	if (status < 0)
-		gpiod_free(desc);
-	else
-		set_bit(FLAG_SYSFS, &desc->flags);
+	if  ((!!gpio_autotest && !test_bit(FLAG_EXPORT, &desc->flags)) ||
+		(gpio_autotest == 0)) {
+		status = gpiod_export(desc, true);
+		if (status < 0)
+			gpiod_free(desc);
+		else
+			set_bit(FLAG_SYSFS, &desc->flags);
+	}
 
 done:
 	if (status)

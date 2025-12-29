@@ -1131,8 +1131,8 @@ static void retrieve_status(struct dm_table *table,
 		spec->sector_start = ti->begin;
 		spec->length = ti->len;
 		strncpy(spec->target_type, ti->type->name,
-			sizeof(spec->target_type));
-
+			sizeof(spec->target_type)-1);
+		spec->target_type[sizeof(spec->target_type)-1] = 0;
 		outptr += sizeof(struct dm_target_spec);
 		remaining = len - (outptr - outbuf);
 		if (remaining <= 0) {

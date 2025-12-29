@@ -61,6 +61,11 @@ obj-$(CONFIG_MMC_TOSHIBA_PCI)	+= toshsd.o
 obj-$(CONFIG_MMC_REALTEK_PCI)	+= rtsx_pci_sdmmc.o
 obj-$(CONFIG_MMC_REALTEK_USB)	+= rtsx_usb_sdmmc.o
 
+obj-$(CONFIG_MMC_SDHC_SPRD)		+= sprd-sdhc.o
+obj-$(CONFIG_MMC_SPRD_SDHCR7)		+= sprd-sdhcr7.o
+obj-$(CONFIG_MMC_SPRD_SDHCR8)		+= sprd-sdhcr8.o
+obj-$(CONFIG_MMC_SPRD_SDHCR10)		+= sprd-sdhcr10.o
+obj-$(CONFIG_MMC_SPRD_SDHCR11)		+= sprd-sdhcr11.o
 obj-$(CONFIG_MMC_SDHCI_PLTFM)		+= sdhci-pltfm.o
 obj-$(CONFIG_MMC_SDHCI_CNS3XXX)		+= sdhci-cns3xxx.o
 obj-$(CONFIG_MMC_SDHCI_ESDHC_IMX)	+= sdhci-esdhc-imx.o

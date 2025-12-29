@@ -41,7 +41,7 @@
 #define ML_MAGIC1			0x39685a42
 #define ML_MAGIC2			0x26594131
 #define TRX_MAGIC			0x30524448
-#define SHSQ_MAGIC			0x71736873	/* shsq (weird ZTE H218N endianness) */
+#define SHSQ_MAGIC			0x71736873	
 #define UBI_EC_MAGIC			0x23494255	/* UBI# */
 
 struct trx_header {

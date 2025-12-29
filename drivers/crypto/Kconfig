@@ -346,6 +346,18 @@ config CRYPTO_DEV_S5P
 	  Select this to offload Samsung S5PV210 or S5PC110, Exynos from AES
 	  algorithms execution.
 
+config CRYPTO_DEV_SPRD_AES
+	tristate "Support for SPRD AES hw crypto engine"
+        depends on ARCH_SPRD
+	select CRYPTO_AES
+	select CRYPTO_CBC
+	help
+	  SPREADTRUM processors have AES crypto module accelerator. Select this if you
+	  want to use the SPREADTRUM module for AES algorithms.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called sprd-aes.
+
 config CRYPTO_DEV_NX
 	bool "Support for IBM PowerPC Nest (NX) cryptographic acceleration"
 	depends on PPC64
@@ -497,5 +509,12 @@ config CRYPTO_DEV_SUN4I_SS
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called sun4i-ss.
+
+config CRYPTO_DEV_DX_CC63P
+	tristate "Support for Discretix crypto dx_cc63p accelerator"
+	default n
+	help
+	  This option allows you to have support for Discretix dx_cc63p
+	  acceleration.
 
 endif # CRYPTO_HW

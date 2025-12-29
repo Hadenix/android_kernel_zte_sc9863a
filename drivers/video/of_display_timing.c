@@ -56,6 +56,9 @@ static int parse_timing_property(const struct device_node *np, const char *name,
  * of_parse_display_timing - parse display_timing entry from device_node
  * @np: device_node with the properties
  **/
+#ifdef ZTE_LCD_MIPI_CLK_CUSTOM
+extern uint32_t mipi_clk_from_uboot;
+#endif
 static int of_parse_display_timing(const struct device_node *np,
 		struct display_timing *dt)
 {
@@ -65,14 +68,28 @@ static int of_parse_display_timing(const struct device_node *np,
 	memset(dt, 0, sizeof(*dt));
 
 	ret |= parse_timing_property(np, "hback-porch", &dt->hback_porch);
+	#ifdef ZTE_LCD_FPS_CUSTOM
+	ret |= parse_timing_property(np, "hfront-porch-v2", &dt->hfront_porch);
+	#else
 	ret |= parse_timing_property(np, "hfront-porch", &dt->hfront_porch);
+	#endif
 	ret |= parse_timing_property(np, "hactive", &dt->hactive);
 	ret |= parse_timing_property(np, "hsync-len", &dt->hsync_len);
 	ret |= parse_timing_property(np, "vback-porch", &dt->vback_porch);
 	ret |= parse_timing_property(np, "vfront-porch", &dt->vfront_porch);
 	ret |= parse_timing_property(np, "vactive", &dt->vactive);
 	ret |= parse_timing_property(np, "vsync-len", &dt->vsync_len);
+	#ifdef ZTE_LCD_MIPI_CLK_CUSTOM
 	ret |= parse_timing_property(np, "clock-frequency", &dt->pixelclock);
+	if (mipi_clk_from_uboot > 1000) {
+		dt->pixelclock.max = mipi_clk_from_uboot;
+		dt->pixelclock.min = mipi_clk_from_uboot;
+		dt->pixelclock.typ = mipi_clk_from_uboot;
+	}
+	pr_info("[SPRD_LCD] pixelclock is set to uboot value=%d", dt->pixelclock.typ);
+	#else
+	ret |= parse_timing_property(np, "clock-frequency", &dt->pixelclock);
+	#endif
 
 	dt->flags = 0;
 	if (!of_property_read_u32(np, "vsync-active", &val))

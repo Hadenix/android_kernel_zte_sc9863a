@@ -5,7 +5,7 @@ obj-$(CONFIG_ADF)		  += adf/
 obj-$(CONFIG_VT)		  += console/
 obj-$(CONFIG_LOGO)		  += logo/
 obj-y				  += backlight/
-
+obj-y				  += disp_pw_domain/
 obj-y				  += fbdev/
 
 obj-$(CONFIG_VIDEOMODE_HELPERS) += display_timing.o videomode.o

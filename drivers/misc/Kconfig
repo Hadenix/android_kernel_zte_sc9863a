@@ -527,11 +527,32 @@ config VEXPRESS_SYSCFG
 
 config UID_SYS_STATS
 	bool "Per-UID statistics"
-	depends on PROFILING && TASK_XACCT && TASK_IO_ACCOUNTING
+	depends on PROFILING
 	help
 	  Per UID based cpu time statistics exported to /proc/uid_cputime
 	  Per UID based io statistics exported to /proc/uid_io
 	  Per UID based procstat control in /proc/uid_procstat
+
+config BT_SC2331
+	tristate "Spreadtrum SC2331 BT LPM Support"
+	help
+	  Bluetooth low power control driver.
+	  This driver call sdiodev interface to wake up Bluetooth
+	  chipset.
+	  Say Y here to compile support for SPRD 2331 LPM driver
+	  into the kernel or say M to compile it as module.
+
+config SPRD_7SRESET
+        tristate "Spreadtrum PMIC 7s reset driver"
+        default n
+        help
+          This driver support for 7Sreset of PMIC(2723,2731)
+
+config SPRD_VOICETRIGGER_DRIVER
+	tristate "sprd voicetrigger realtek rt5512 driver"
+	default y
+	help
+		this driver is for voicetrigger for whale2
 
 config UID_SYS_STATS_DEBUG
 	bool "Per-TASK statistics"
@@ -546,6 +567,25 @@ config MEMORY_STATE_TIME
 	help
 	  Memory time statistics exported to /sys/kernel/memory_state_time
 
+config SPRD_TMC
+	bool "SPRD Coresight TMC driver"
+	depends on X86
+	default n
+	help
+	  This enables support for the Embedded Trace Buffer driver
+	  that complies with the generic implementation of the component
+	  without special enhancement or added features.
+	  It will only be supported in BIA platform, because there is no
+	  coresight SW arch in this platform, but others system may use
+	  it to store ETB trace.
+
+config QOS_SECURE_SETTING
+	bool  "Qos secure setting"
+	default n
+	---help---
+	This option enables secure register setting by SML through smc.
+	If you are unsure, say N.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -558,4 +598,15 @@ source "drivers/misc/mic/Kconfig"
 source "drivers/misc/genwqe/Kconfig"
 source "drivers/misc/echo/Kconfig"
 source "drivers/misc/cxl/Kconfig"
+source "drivers/misc/sprd_vsp/Kconfig"
+source "drivers/misc/sprd_vpp/Kconfig"
+source "drivers/misc/sprd_jpg/Kconfig"
+source "drivers/misc/sprd_camera/Kconfig"
+source "drivers/misc/sprdwcn_bsp/sc2342/Kconfig"
+source "drivers/misc/sprdwcn_bsp/sc23xx/Kconfig"
+source "drivers/misc/mcdt/Kconfig"
+source "drivers/misc/sprd_audio/Kconfig"
+source "drivers/misc/dual-sim-plug/Kconfig"
+source "drivers/misc/sprd_otp/Kconfig"
+source "drivers/misc/ir-peel/Kconfig"
 endmenu

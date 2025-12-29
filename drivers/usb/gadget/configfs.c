@@ -34,6 +34,9 @@ struct device *create_function_device(char *name)
 EXPORT_SYMBOL_GPL(create_function_device);
 #endif
 
+extern bool in_calibration(void);
+extern bool in_autotest(void);
+
 int check_user_usb_string(const char *name,
 		struct usb_gadget_strings *stringtab_dev)
 {
@@ -76,6 +79,7 @@ struct gadget_info {
 	struct config_group os_desc_group;
 	struct config_group *default_groups[5];
 
+	spinlock_t slock;
 	struct mutex lock;
 	struct usb_gadget_strings *gstrings[MAX_USB_STRING_LANGS + 1];
 	struct list_head string_list;
@@ -237,9 +241,13 @@ static ssize_t gadget_dev_desc_bcdDevice_store(struct config_item *item,
 	ret = kstrtou16(page, 0, &bcdDevice);
 	if (ret)
 		return ret;
-	ret = is_valid_bcd(bcdDevice);
-	if (ret)
-		return ret;
+
+	/* bcdDevice of SPRD mtp device descriptor is set to 0xffff */
+	if (bcdDevice != 0xffff) {
+		ret = is_valid_bcd(bcdDevice);
+		if (ret)
+			return ret;
+	}
 
 	to_gadget_info(item)->cdev.desc.bcdDevice = cpu_to_le16(bcdDevice);
 	return len;
@@ -426,6 +434,11 @@ static int config_usb_cfg_link(
 	}
 
 	f = usb_get_function(fi);
+	if (f == NULL) {
+		/* Are we trying to symlink PTP without MTP function? */
+		ret = -EINVAL; /* Invalid Configuration */
+		goto out;
+	}
 	if (IS_ERR(f)) {
 		ret = PTR_ERR(f);
 		goto out;
@@ -1329,7 +1342,12 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
 
 		gi->cdev.desc.iManufacturer = s[USB_GADGET_MANUFACTURER_IDX].id;
 		gi->cdev.desc.iProduct = s[USB_GADGET_PRODUCT_IDX].id;
-		gi->cdev.desc.iSerialNumber = s[USB_GADGET_SERIAL_IDX].id;
+		if (in_calibration() || in_autotest()) {
+			gi->cdev.desc.iSerialNumber = 0;
+			gi->cdev.desc.bDeviceClass = 0xff;
+		} else {
+			gi->cdev.desc.iSerialNumber = s[USB_GADGET_SERIAL_IDX].id;
+		}
 	}
 
 	if (gi->use_os_desc) {
@@ -1418,8 +1436,8 @@ static void android_work(struct work_struct *data)
 	unsigned long flags;
 	bool uevent_sent = false;
 
-	spin_lock_irqsave(&cdev->lock, flags);
-	if (cdev->config)
+	spin_lock_irqsave(&gi->slock, flags);
+	if (cdev->config && gi->connected)
 		status[1] = true;
 
 	if (gi->connected != gi->sw_connected) {
@@ -1429,7 +1447,7 @@ static void android_work(struct work_struct *data)
 			status[2] = true;
 		gi->sw_connected = gi->connected;
 	}
-	spin_unlock_irqrestore(&cdev->lock, flags);
+	spin_unlock_irqrestore(&gi->slock, flags);
 
 	if (status[0]) {
 		kobject_uevent_env(&android_device->kobj,
@@ -1482,24 +1500,15 @@ static void configfs_composite_unbind(struct usb_gadget *gadget)
 static int android_setup(struct usb_gadget *gadget,
 			const struct usb_ctrlrequest *c)
 {
-	struct usb_composite_dev *cdev = get_gadget_data(gadget);
+	struct gadget_info *gi = dev_get_drvdata(android_device);
+	struct usb_composite_dev *cdev = &gi->cdev;
 	unsigned long flags;
-	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
 	int value = -EOPNOTSUPP;
-	struct usb_function_instance *fi;
 
-	spin_lock_irqsave(&cdev->lock, flags);
+	spin_lock_irqsave(&gi->slock, flags);
 	if (!gi->connected) {
 		gi->connected = 1;
 		schedule_work(&gi->work);
-	}
-	spin_unlock_irqrestore(&cdev->lock, flags);
-	list_for_each_entry(fi, &gi->available_func, cfs_list) {
-		if (fi != NULL && fi->f != NULL && fi->f->setup != NULL) {
-			value = fi->f->setup(fi->f, c);
-			if (value >= 0)
-				break;
-		}
 	}
 
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
@@ -1510,13 +1519,11 @@ static int android_setup(struct usb_gadget *gadget,
 	if (value < 0)
 		value = composite_setup(gadget, c);
 
-	spin_lock_irqsave(&cdev->lock, flags);
 	if (c->bRequest == USB_REQ_SET_CONFIGURATION &&
 						cdev->config) {
 		schedule_work(&gi->work);
 	}
-	spin_unlock_irqrestore(&cdev->lock, flags);
-
+	spin_unlock_irqrestore(&gi->slock, flags);
 	return value;
 }
 
@@ -1524,18 +1531,7 @@ static void android_disconnect(struct usb_gadget *gadget)
 {
 	struct usb_composite_dev        *cdev = get_gadget_data(gadget);
 	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
-
-	/* FIXME: There's a race between usb_gadget_udc_stop() which is likely
-	 * to set the gadget driver to NULL in the udc driver and this drivers
-	 * gadget disconnect fn which likely checks for the gadget driver to
-	 * be a null ptr. It happens that unbind (doing set_gadget_data(NULL))
-	 * is called before the gadget driver is set to NULL and the udc driver
-	 * calls disconnect fn which results in cdev being a null ptr.
-	 */
-	if (cdev == NULL) {
-		WARN(1, "%s: gadget driver already disconnected\n", __func__);
-		return;
-	}
+	unsigned long flags;
 
 	/* accessory HID support can be active while the
 		accessory function is not actually enabled,
@@ -1545,8 +1541,10 @@ static void android_disconnect(struct usb_gadget *gadget)
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
 	acc_disconnect();
 #endif
+	spin_lock_irqsave(&gi->slock, flags);
 	gi->connected = 0;
 	schedule_work(&gi->work);
+	spin_unlock_irqrestore(&gi->slock, flags);
 	composite_disconnect(gadget);
 }
 #endif
@@ -1686,6 +1684,7 @@ static struct config_group *gadgets_make(
 	gi->composite.resume = NULL;
 	gi->composite.max_speed = USB_SPEED_SUPER;
 
+	spin_lock_init(&gi->slock);
 	mutex_init(&gi->lock);
 	INIT_LIST_HEAD(&gi->string_list);
 	INIT_LIST_HEAD(&gi->available_func);

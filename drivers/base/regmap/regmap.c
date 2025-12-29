@@ -540,6 +540,11 @@ struct regmap *__regmap_init(struct device *dev,
 		goto err;
 	}
 
+	if (config->hw_lock && config->hw_unlock) {
+		map->hw_lock = config->hw_lock;
+		map->hw_unlock = config->hw_unlock;
+		map->hw_lock_arg = config->hw_lock_arg;
+	}
 	if (config->lock && config->unlock) {
 		map->lock = config->lock;
 		map->unlock = config->unlock;
@@ -1525,6 +1530,33 @@ int regmap_write(struct regmap *map, unsigned int reg, unsigned int val)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(regmap_write);
+
+/**
+ * regmap_hwlock_write(): Write a value to a single register
+ *
+ * @map: Register map to write to
+ * @reg: Register to write to
+ * @val: Value to be written
+ *
+ * A value of zero will be returned on success, a negative errno will
+ * be returned in error cases.
+ */
+int regmap_hwlock_write(struct regmap *map, unsigned int reg, unsigned int val)
+{
+	int ret;
+
+	if (reg % map->reg_stride)
+		return -EINVAL;
+
+	map->hw_lock(map->hw_lock_arg);
+
+	ret = _regmap_write(map, reg, val);
+
+	map->hw_unlock(map->hw_lock_arg);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regmap_hwlock_write);
 
 /**
  * regmap_write_async(): Write a value to a single register asynchronously
@@ -2567,6 +2599,39 @@ int regmap_update_bits(struct regmap *map, unsigned int reg,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(regmap_update_bits);
+
+/**
+ * regmap_hwlock_update_bits: Perform a read/modify/write cycle
+ * on the register map
+ *
+ * @map: Register map to update
+ * @reg: Register to update
+ * @mask: Bitmask to change
+ * @val: New value for bitmask
+ *
+ * Returns zero for success, a negative number on error.
+ */
+int regmap_hwlock_update_bits(struct regmap *map, unsigned int reg,
+		       unsigned int mask, unsigned int val)
+{
+	int ret;
+	unsigned int tmp, orig;
+
+	map->hw_lock(map->hw_lock_arg);
+	ret = _regmap_read(map, reg, &orig);
+	if (ret != 0) {
+		map->hw_unlock(map->hw_lock_arg);
+		return ret;
+	}
+	tmp = orig & ~mask;
+	tmp |= val & mask;
+	if (tmp != orig)
+		ret = _regmap_write(map, reg, tmp);
+	map->hw_unlock(map->hw_lock_arg);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regmap_hwlock_update_bits);
 
 /**
  * regmap_write_bits: Perform a read/modify/write cycle on the register map

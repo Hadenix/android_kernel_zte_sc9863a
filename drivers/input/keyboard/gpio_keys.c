@@ -46,6 +46,7 @@ struct gpio_button_data {
 	spinlock_t lock;
 	bool disabled;
 	bool key_pressed;
+	bool missed_event;
 };
 
 struct gpio_keys_drvdata {
@@ -342,6 +343,7 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
 	int state = gpio_get_value_cansleep(button->gpio);
+	unsigned long flags;
 
 	if (state < 0) {
 		dev_err(input->dev.parent, "failed to get gpio state\n");
@@ -353,7 +355,17 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		if (state)
 			input_event(input, type, button->code, button->value);
 	} else {
+		spin_lock_irqsave(&bdata->lock, flags);
+		if (bdata->missed_event) {
+			pr_info("[KEY] event missed!");
+			input_event(input, type, button->code, !state);
+			bdata->missed_event = false;
+		}
+		spin_unlock_irqrestore(&bdata->lock, flags);
+
 		input_event(input, type, button->code, !!state);
+		pr_info("[KEY] Key:%s ScanCode:%d Value:%d\n",
+			button->desc, button->code, !!state);
 	}
 	input_sync(input);
 }
@@ -362,11 +374,44 @@ static void gpio_keys_gpio_work_func(struct work_struct *work)
 {
 	struct gpio_button_data *bdata =
 		container_of(work, struct gpio_button_data, work.work);
+	unsigned int trigger = irqd_get_trigger_type(
+					irq_get_irq_data(bdata->irq));
+	int state = gpio_get_value_cansleep(bdata->button->gpio);
+	unsigned long flags;
 
-	gpio_keys_gpio_report_event(bdata);
+	/*
+	 * If the key GPIO is level trigger, we need to check if we missed key
+	 * event firstly. When resume the system by power key, and the work is
+	 * not issued by irq handler as fast as possible, at this time we maybe
+	 * missed resuming event when check the GPIO value in work.
+	 */
+	if (bdata->button->level_trigger) {
+		if (((trigger & IRQF_TRIGGER_LOW) && (state > 0)) ||
+		    ((trigger & IRQF_TRIGGER_HIGH) && (state == 0))) {
+			spin_lock_irqsave(&bdata->lock, flags);
+			bdata->missed_event = true;
+			spin_unlock_irqrestore(&bdata->lock, flags);
+		}
+	}
 
 	if (bdata->button->wakeup)
 		pm_relax(bdata->input->dev.parent);
+
+	if (bdata->button->level_trigger) {
+		if (state) {
+			trigger &= ~IRQF_TRIGGER_HIGH;
+			trigger |= IRQF_TRIGGER_LOW;
+		} else {
+			trigger &= ~IRQF_TRIGGER_LOW;
+			trigger |= IRQF_TRIGGER_HIGH;
+		}
+		irq_set_irq_type(bdata->irq, trigger);
+		enable_irq(bdata->irq);
+
+		pr_info("[KEY] wake up cpu by level trigger:%d\n", trigger);
+	}
+
+	gpio_keys_gpio_report_event(bdata);
 }
 
 static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
@@ -375,10 +420,13 @@ static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
 
 	BUG_ON(irq != bdata->irq);
 
+	if (bdata->button->level_trigger)
+		disable_irq_nosync(irq);
+
 	if (bdata->button->wakeup)
 		pm_stay_awake(bdata->input->dev.parent);
 
-	mod_delayed_work(system_wq,
+	mod_delayed_work(system_unbound_wq,
 			 &bdata->work,
 			 msecs_to_jiffies(bdata->software_debounce));
 
@@ -497,8 +545,12 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 		INIT_DELAYED_WORK(&bdata->work, gpio_keys_gpio_work_func);
 
 		isr = gpio_keys_gpio_isr;
-		irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
-
+		if (button->level_trigger) {
+			irqflags = button->active_low ?
+				IRQF_TRIGGER_LOW : IRQF_TRIGGER_HIGH;
+		} else {
+			irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+		}
 	} else {
 		if (!button->irq) {
 			dev_err(dev, "No IRQ specified\n");
@@ -628,6 +680,8 @@ gpio_keys_get_devtree_pdata(struct device *dev)
 
 	pdata->rep = !!of_get_property(node, "autorepeat", NULL);
 
+	pdata->name = of_get_property(node, "input-name", NULL);
+
 	i = 0;
 	for_each_child_of_node(node, pp) {
 		enum of_gpio_flags flags;
@@ -671,6 +725,9 @@ gpio_keys_get_devtree_pdata(struct device *dev)
 				 of_property_read_bool(pp, "gpio-key,wakeup");
 
 		button->can_disable = !!of_get_property(pp, "linux,can-disable", NULL);
+
+		button->level_trigger = !!of_get_property(pp,
+			"gpio-key,level-trigger", NULL);
 
 		if (of_property_read_u32(pp, "debounce-interval",
 					 &button->debounce_interval))
@@ -846,7 +903,7 @@ static int gpio_keys_resume(struct device *dev)
 }
 #endif
 
-static SIMPLE_DEV_PM_OPS(gpio_keys_pm_ops, gpio_keys_suspend, gpio_keys_resume);
+static LATE_DEV_PM_OPS(gpio_keys_pm_ops, gpio_keys_suspend, gpio_keys_resume);
 
 static struct platform_driver gpio_keys_device_driver = {
 	.probe		= gpio_keys_probe,

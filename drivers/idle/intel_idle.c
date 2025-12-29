@@ -64,6 +64,15 @@
 #include <asm/cpu_device_id.h>
 #include <asm/mwait.h>
 #include <asm/msr.h>
+#include <asm/tlbflush.h>
+#include <linux/mfd/syscon.h>
+#include <linux/mfd/syscon/sprd-glb.h>
+#include <linux/regmap.h>
+
+#ifdef CONFIG_MOBILEVISOR
+#include <asm/mv/cpu.h>
+#include <asm/mv/mobilevisor.h>
+#endif
 
 #define INTEL_IDLE_VERSION "0.4.1"
 #define PREFIX "intel_idle: "
@@ -110,6 +119,14 @@ static struct cpuidle_state *cpuidle_state_table;
  * HW doesn't do the flushing, this flag is safe to use.
  */
 #define CPUIDLE_FLAG_TLB_FLUSHED	0x10000
+
+/*
+ * Force TLB flush for IDLE. Butter soc guarante tlb flushed
+ * for c6fs/c6ns in ucode. Two sw exception: for shared core,
+ * vmm arbitrate the idle request for guests; need_resched
+ * occur in mwait_idle_with_hints.
+ */
+#define CPUIDLE_FLAG_FORCE_TLB_FLUSH	0x20000
 
 /*
  * MWAIT takes an 8-bit "hint" in EAX "suggesting"
@@ -737,6 +754,49 @@ static struct cpuidle_state knl_cstates[] = {
 		.enter = NULL }
 };
 
+static struct cpuidle_state bhl_cstates[] = {
+	{ /* MWAIT C1 */
+		.name = "C1-ATM",
+		.desc = "MWAIT 0x00",
+		.flags = MWAIT2flg(0x00),
+		.exit_latency = 1,
+		.target_residency = 4,
+		.enter = &intel_idle },
+	{ /* MWAIT C6NS(no-shrink) */
+		.name = "C6NS",
+		.desc = "MWAIT 0x58",
+		.flags = MWAIT2flg(0x58) |
+#ifdef CONFIG_X86_C6_TLB_IPI_OPT
+					CPUIDLE_FLAG_FORCE_TLB_FLUSH |
+#endif
+					CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 40,
+		.target_residency = 500,
+		.enter = &intel_idle },
+	{ /* MWAIT C6FS(full-shrink) */
+		.name = "C6FS",
+		.desc = "MWAIT 0x52",
+		.flags = MWAIT2flg(0x52) |
+#ifdef CONFIG_X86_C6_TLB_IPI_OPT
+					CPUIDLE_FLAG_FORCE_TLB_FLUSH |
+#endif
+					CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 250,
+		.target_residency = 2000,
+		.enter = &intel_idle },
+	{
+		.enter = NULL }
+};
+
+#ifdef CONFIG_MOBILEVISOR
+/* VMM idle use VMM monitor address, IPI to trigger need_resched */
+static inline void mwait_idle_vmm(unsigned long eax, unsigned long ecx)
+{
+	if (!need_resched())
+		__mwait(eax, ecx);
+}
+#endif
+
 /**
  * intel_idle
  * @dev: cpuidle_device
@@ -766,7 +826,15 @@ static int intel_idle(struct cpuidle_device *dev,
 	if (!(lapic_timer_reliable_states & (1 << (cstate))))
 		tick_broadcast_enter();
 
-	mwait_idle_with_hints(eax, ecx);
+#ifdef CONFIG_MOBILEVISOR
+	if (is_x86_mobilevisor() && mv_is_cpu_shared(cpu))
+		mwait_idle_vmm(eax, ecx);
+	else
+#endif
+		mwait_idle_with_hints(eax, ecx);
+
+	if (state->flags & CPUIDLE_FLAG_FORCE_TLB_FLUSH)
+		__flush_tlb_all(); /* force flush tlb for all c6 */
 
 	if (!(lapic_timer_reliable_states & (1 << (cstate))))
 		tick_broadcast_exit();
@@ -914,6 +982,11 @@ static const struct idle_cpu idle_cpu_knl = {
 	.state_table = knl_cstates,
 };
 
+static const struct idle_cpu idle_cpu_bhl = {
+	.state_table = bhl_cstates,
+	.disable_promotion_to_c1e = true,
+};
+
 #define ICPU(model, cpu) \
 	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_MWAIT, (unsigned long)&cpu }
 
@@ -946,10 +1019,26 @@ static const struct x86_cpu_id intel_idle_ids[] __initconst = {
 	ICPU(0x4e, idle_cpu_skl),
 	ICPU(0x5e, idle_cpu_skl),
 	ICPU(0x57, idle_cpu_knl),
+	ICPU(0x75, idle_cpu_bhl),
 	{}
 };
 MODULE_DEVICE_TABLE(x86cpu, intel_idle_ids);
-
+#if defined(CONFIG_SOC_IWHALE2)
+#define AON_VER_ID_A0 0
+#define AON_VER_ID_A1 1
+static int get_chipid(void)
+{
+	unsigned int chipid;
+	struct regmap *aon_reg =
+		 syscon_regmap_lookup_by_compatible("sprd,sys-aon-apb");
+	if (IS_ERR_OR_NULL(aon_reg)) {
+		pr_err("%s:failed to find sprd reg\n", __func__);
+		return -ENODEV;
+	}
+	regmap_read(aon_reg, REG_AON_APB_AON_VER_ID, &chipid);
+	return (int)BIT_AON_APB_AON_VER_ID(chipid);
+}
+#endif
 /*
  * intel_idle_probe()
  */
@@ -963,6 +1052,12 @@ static int __init intel_idle_probe(void)
 		return -EPERM;
 	}
 
+#if defined(CONFIG_SOC_IWHALE2)
+	if (get_chipid() == AON_VER_ID_A0) {
+		pr_debug(PREFIX "intel idle disabled on A0");
+		return -EPERM;
+	}
+#endif
 	id = x86_match_cpu(intel_idle_ids);
 	if (!id) {
 		if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&

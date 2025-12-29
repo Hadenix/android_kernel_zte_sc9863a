@@ -58,7 +58,7 @@ static int usb_start_wait_urb(struct urb *urb, int timeout, int *actual_length)
 		usb_kill_urb(urb);
 		retval = (ctx.status == -ENOENT ? -ETIMEDOUT : ctx.status);
 
-		dev_dbg(&urb->dev->dev,
+		dev_info(&urb->dev->dev,
 			"%s timed out on ep%d%s len=%u/%u\n",
 			current->comm,
 			usb_endpoint_num(&urb->ep->desc),
@@ -146,10 +146,6 @@ int usb_control_msg(struct usb_device *dev, unsigned int pipe, __u8 request,
 	dr->wLength = cpu_to_le16(size);
 
 	ret = usb_internal_control_msg(dev, pipe, dr, data, size, timeout);
-
-	/* Linger a bit, prior to the next control message. */
-	if (dev->quirks & USB_QUIRK_DELAY_CTRL_MSG)
-		msleep(200);
 
 	kfree(dr);
 

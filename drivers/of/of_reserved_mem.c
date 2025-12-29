@@ -23,8 +23,13 @@
 #include <linux/sort.h>
 
 #define MAX_RESERVED_REGIONS	16
+#ifdef CONFIG_DETOUR_MEM
+struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
+int reserved_mem_count;
+#else
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
 static int reserved_mem_count;
+#endif
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
 #include <linux/memblock.h>

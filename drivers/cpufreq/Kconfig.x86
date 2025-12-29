@@ -3,17 +3,28 @@
 #
 
 config X86_INTEL_PSTATE
-       bool "Intel P state control"
-       depends on X86
-       help
-          This driver provides a P state for Intel core processors.
+	bool "Intel P state control"
+	depends on X86
+	help
+	  This driver provides a P state for Intel core processors.
 	  The driver implements an internal governor and will become
-          the scaling driver and governor for Sandy bridge processors.
+	  the scaling driver and governor for Sandy bridge processors.
 
 	  When this driver is enabled it will become the preferred
-          scaling driver for Sandy bridge processors.
+	  scaling driver for Sandy bridge processors.
 
 	  If in doubt, say N.
+
+config X86_BERGENFIELD_CPUFREQ
+	default n
+	tristate "Bergenfield Performance-States driver"
+	depends on X86
+	select PM_OPP
+	help
+	 Right now freq/vid table is generated within the uboot.
+	 For VIDs there is no MSR for BASEIA. Instead of that memory mapped
+	 registers are used to get vid for LFM and HFM.
+	 If in doubt, say N.
 
 config X86_PCC_CPUFREQ
 	tristate "Processor Clocking Control interface driver"

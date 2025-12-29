@@ -20,6 +20,7 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
+#include <linux/wait.h>
 
 #ifdef VERBOSE_DEBUG
 #ifndef pr_vdebug
@@ -176,6 +177,8 @@ struct ffs_data {
 	struct usb_request		*ep0req;		/* P: mutex */
 	struct completion		ep0req_completion;	/* P: mutex */
 
+	/* wait for the gadget has been cleaned */
+	wait_queue_head_t		wait_gadget;
 	/* reference counter */
 	atomic_t			ref;
 	/* how many files are opened (EP0 and others) */

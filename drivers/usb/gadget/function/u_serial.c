@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/module.h>
+#include <linux/console.h>
+#include <linux/kthread.h>
 
 #include "u_serial.h"
 
@@ -79,6 +81,7 @@
  */
 #define QUEUE_SIZE		16
 #define WRITE_BUF_SIZE		8192		/* TX only */
+#define GS_CONSOLE_BUF_SIZE	8192
 
 /* circular buffer */
 struct gs_buf {
@@ -86,6 +89,17 @@ struct gs_buf {
 	char			*buf_buf;
 	char			*buf_get;
 	char			*buf_put;
+};
+
+/* console info */
+struct gscons_info {
+	struct gs_port		*port;
+	struct task_struct	*console_thread;
+	struct gs_buf		con_buf;
+	/* protect the buf and busy flag */
+	spinlock_t		con_lock;
+	int			req_busy;
+	struct usb_request	*console_req;
 };
 
 /*
@@ -361,9 +375,15 @@ __acquires(&port->port_lock)
 */
 {
 	struct list_head	*pool = &port->write_pool;
-	struct usb_ep		*in = port->port_usb->in;
+	struct usb_ep		*in;
 	int			status = 0;
 	bool			do_tty_wake = false;
+	bool			send_zero_packet = false;
+
+	if (!port->port_usb)
+		return status;
+
+	in = port->port_usb->in;
 
 	while (!port->write_busy && !list_empty(pool)) {
 		struct usb_request	*req;
@@ -373,16 +393,21 @@ __acquires(&port->port_lock)
 			break;
 
 		req = list_entry(pool->next, struct usb_request, list);
-		len = gs_send_packet(port, req->buf, in->maxpacket);
-		if (len == 0) {
+		len = gs_send_packet(port, req->buf, WRITE_BUF_SIZE);
+		if (len == 0 && !send_zero_packet) {
 			wake_up_interruptible(&port->drain_wait);
 			break;
+		} else if (send_zero_packet) {
+			send_zero_packet = false;
 		}
+
 		do_tty_wake = true;
 
 		req->length = len;
 		list_del(&req->list);
 		req->zero = (gs_buf_data_avail(&port->port_write_buf) == 0);
+		if (req->zero && in->maxpacket == req->length)
+			send_zero_packet = true;
 
 		pr_vdebug("ttyGS%d: tx len=%d, 0x%02x 0x%02x 0x%02x ...\n",
 			  port->port_num, len, *((u8 *)req->buf),
@@ -647,7 +672,7 @@ static int gs_alloc_requests(struct usb_ep *ep, struct list_head *head,
 	 * be as speedy as we might otherwise be.
 	 */
 	for (i = 0; i < n; i++) {
-		req = gs_alloc_req(ep, ep->maxpacket, GFP_ATOMIC);
+		req = gs_alloc_req(ep, WRITE_BUF_SIZE, GFP_ATOMIC);
 		if (!req)
 			return list_empty(head) ? -ENOMEM : 0;
 		req->complete = fn;
@@ -697,7 +722,7 @@ static int gs_start_io(struct gs_port *port)
 	started = gs_start_rx(port);
 
 	/* unblock any pending writes into our circular buffer */
-	if (started) {
+	if (started && port->port.tty) {
 		tty_wakeup(port->port.tty);
 	} else {
 		gs_free_requests(ep, head, &port->read_allocated);
@@ -1023,6 +1048,246 @@ static const struct tty_operations gs_tty_ops = {
 
 static struct tty_driver *gs_tty_driver;
 
+#ifdef CONFIG_U_SERIAL_CONSOLE
+
+static struct gscons_info gscons_info;
+static struct console gserial_cons;
+
+static struct usb_request *gs_request_new(struct usb_ep *ep)
+{
+	struct usb_request *req = usb_ep_alloc_request(ep, GFP_ATOMIC);
+	if (!req)
+		return NULL;
+
+	req->buf = kmalloc(ep->maxpacket, GFP_ATOMIC);
+	if (!req->buf) {
+		usb_ep_free_request(ep, req);
+		return NULL;
+	}
+
+	return req;
+}
+
+static void gs_request_free(struct usb_request *req, struct usb_ep *ep)
+{
+	if (!req)
+		return;
+
+	kfree(req->buf);
+	usb_ep_free_request(ep, req);
+}
+
+static void gs_complete_out(struct usb_ep *ep, struct usb_request *req)
+{
+	struct gscons_info *info = &gscons_info;
+
+	switch (req->status) {
+	default:
+		pr_warn("%s: unexpected %s status %d\n",
+			__func__, ep->name, req->status);
+	case 0:
+		/* normal completion */
+		spin_lock(&info->con_lock);
+		info->req_busy = 0;
+		spin_unlock(&info->con_lock);
+
+		wake_up_process(info->console_thread);
+		break;
+	case -ESHUTDOWN:
+		/* disconnect */
+		pr_vdebug("%s: %s shutdown\n", __func__, ep->name);
+		break;
+	}
+}
+
+static int gs_console_connect(int port_num)
+{
+	struct gscons_info *info = &gscons_info;
+	struct gs_port *port;
+	struct usb_ep *ep;
+
+	if (port_num != gserial_cons.index) {
+		pr_err("%s: port num [%d] is not support console\n",
+		       __func__, port_num);
+		return -ENXIO;
+	}
+
+	port = ports[port_num].port;
+	ep = port->port_usb->in;
+	if (!info->console_req) {
+		info->console_req = gs_request_new(ep);
+		if (!info->console_req)
+			return -ENOMEM;
+		info->console_req->complete = gs_complete_out;
+	}
+
+	info->port = port;
+	spin_lock(&info->con_lock);
+	info->req_busy = 0;
+	spin_unlock(&info->con_lock);
+	pr_vdebug("port[%d] console connect!\n", port_num);
+	return 0;
+}
+
+static void gs_console_disconnect(struct usb_ep *ep)
+{
+	struct gscons_info *info = &gscons_info;
+	struct usb_request *req = info->console_req;
+
+	gs_request_free(req, ep);
+	info->console_req = NULL;
+}
+
+static int gs_console_thread(void *data)
+{
+	struct gscons_info *info = &gscons_info;
+	struct gs_port *port;
+	struct usb_request *req;
+	struct usb_ep *ep;
+	int xfer, ret, count, size;
+
+	do {
+		port = info->port;
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (!port || !port->port_usb
+		    || !port->port_usb->in || !info->console_req)
+			goto sched;
+
+		req = info->console_req;
+		ep = port->port_usb->in;
+
+		spin_lock_irq(&info->con_lock);
+		count = gs_buf_data_avail(&info->con_buf);
+		size = ep->maxpacket;
+
+		if (count > 0 && !info->req_busy) {
+			set_current_state(TASK_RUNNING);
+			if (count < size)
+				size = count;
+
+			xfer = gs_buf_get(&info->con_buf, req->buf, size);
+			req->length = xfer;
+
+			spin_unlock(&info->con_lock);
+			ret = usb_ep_queue(ep, req, GFP_ATOMIC);
+			spin_lock(&info->con_lock);
+			if (ret < 0)
+				info->req_busy = 0;
+			else
+				info->req_busy = 1;
+
+			spin_unlock_irq(&info->con_lock);
+		} else {
+			spin_unlock_irq(&info->con_lock);
+sched:
+			if (kthread_should_stop()) {
+				set_current_state(TASK_RUNNING);
+				break;
+			}
+			schedule();
+		}
+	} while (1);
+
+	return 0;
+}
+
+static int gs_console_setup(struct console *co, char *options)
+{
+	struct gscons_info *info = &gscons_info;
+	int status;
+
+	info->port = NULL;
+	info->console_req = NULL;
+	info->req_busy = 0;
+	spin_lock_init(&info->con_lock);
+
+	status = gs_buf_alloc(&info->con_buf, GS_CONSOLE_BUF_SIZE);
+	if (status) {
+		pr_err("%s: allocate console buffer failed\n", __func__);
+		return status;
+	}
+
+	info->console_thread = kthread_create(gs_console_thread,
+					      co, "gs_console");
+	if (IS_ERR(info->console_thread)) {
+		pr_err("%s: cannot create console thread\n", __func__);
+		gs_buf_free(&info->con_buf);
+		return PTR_ERR(info->console_thread);
+	}
+	wake_up_process(info->console_thread);
+
+	return 0;
+}
+
+static void gs_console_write(struct console *co,
+			     const char *buf, unsigned count)
+{
+	struct gscons_info *info = &gscons_info;
+	unsigned long flags;
+
+	spin_lock_irqsave(&info->con_lock, flags);
+	gs_buf_put(&info->con_buf, buf, count);
+	spin_unlock_irqrestore(&info->con_lock, flags);
+
+	wake_up_process(info->console_thread);
+}
+
+static struct tty_driver *gs_console_device(struct console *co, int *index)
+{
+	struct tty_driver **p = (struct tty_driver **)co->data;
+
+	if (!*p)
+		return NULL;
+
+	*index = co->index;
+	return *p;
+}
+
+static struct console gserial_cons = {
+	.name =		"ttyGS",
+	.write =	gs_console_write,
+	.device =	gs_console_device,
+	.setup =	gs_console_setup,
+	.flags =	CON_PRINTBUFFER,
+	.index =	-1,
+	.data =		&gs_tty_driver,
+};
+
+static void gserial_console_init(void)
+{
+	register_console(&gserial_cons);
+}
+
+static void gserial_console_exit(void)
+{
+	struct gscons_info *info = &gscons_info;
+
+	unregister_console(&gserial_cons);
+	kthread_stop(info->console_thread);
+	gs_buf_free(&info->con_buf);
+}
+
+#else
+
+static int gs_console_connect(int port_num)
+{
+	return 0;
+}
+
+static void gs_console_disconnect(struct usb_ep *ep)
+{
+}
+
+static void gserial_console_init(void)
+{
+}
+
+static void gserial_console_exit(void)
+{
+}
+
+#endif
+
 static int
 gs_port_alloc(unsigned port_num, struct usb_cdc_line_coding *coding)
 {
@@ -1096,6 +1361,7 @@ void gserial_free_line(unsigned char port_num)
 
 	gserial_free_port(port);
 	tty_unregister_device(gs_tty_driver, port_num);
+	gserial_console_exit();
 }
 EXPORT_SYMBOL_GPL(gserial_free_line);
 
@@ -1138,6 +1404,7 @@ int gserial_alloc_line(unsigned char *line_num)
 		goto err;
 	}
 	*line_num = port_num;
+	gserial_console_init();
 err:
 	return ret;
 }
@@ -1219,6 +1486,7 @@ int gserial_connect(struct gserial *gser, u8 port_num)
 			gser->disconnect(gser);
 	}
 
+	status = gs_console_connect(port_num);
 	spin_unlock_irqrestore(&port->port_lock, flags);
 
 	return status;
@@ -1277,6 +1545,7 @@ void gserial_disconnect(struct gserial *gser)
 	port->read_allocated = port->read_started =
 		port->write_allocated = port->write_started = 0;
 
+	gs_console_disconnect(gser->in);
 	spin_unlock_irqrestore(&port->port_lock, flags);
 }
 EXPORT_SYMBOL_GPL(gserial_disconnect);

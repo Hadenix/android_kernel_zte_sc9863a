@@ -287,6 +287,8 @@ static int devfreq_cooling_get_requested_power(struct thermal_cooling_device *cd
 	if (state == THERMAL_CSTATE_INVALID)
 		return -EAGAIN;
 
+	pr_info("devfreq tz:%s temp:%d\n", tz->type, tz->temperature);
+
 	dyn_power = dfc->power_table[state];
 
 	/* Scale dynamic power for utilization */
@@ -299,6 +301,9 @@ static int devfreq_cooling_get_requested_power(struct thermal_cooling_device *cd
 					      static_power);
 
 	*power = dyn_power + static_power;
+
+	pr_debug("devfreq request total power:%u static_power:%u dyn_power:%u\n",
+				*power, static_power, dyn_power);
 
 	return 0;
 }
@@ -354,6 +359,8 @@ static int devfreq_cooling_power2state(struct thermal_cooling_device *cdev,
 
 	*state = i;
 	trace_thermal_power_devfreq_limit(cdev, freq, *state, power);
+	pr_debug("power allocator granted power:%u devfreq update state to %lu\n",
+			power, *state);
 	return 0;
 }
 

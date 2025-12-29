@@ -60,7 +60,7 @@ MODULE_ALIAS("mmc:block");
 #define INAND_CMD38_ARG_SECERASE 0x80
 #define INAND_CMD38_ARG_SECTRIM1 0x81
 #define INAND_CMD38_ARG_SECTRIM2 0x88
-#define MMC_BLK_TIMEOUT_MS  (10 * 60 * 1000)        /* 10 minute timeout */
+#define MMC_BLK_TIMEOUT_MS  (2 * 1000)        /* 2 send timeout */
 #define MMC_SANITIZE_REQ_TIMEOUT 240000
 #define MMC_EXTRACT_INDEX_FROM_ARG(x) ((x & 0x00FF0000) >> 16)
 
@@ -139,6 +139,21 @@ MODULE_PARM_DESC(perdev_minors, "Minors numbers to allocate per device");
 static inline int mmc_blk_part_switch(struct mmc_card *card,
 				      struct mmc_blk_data *md);
 static int get_card_status(struct mmc_card *card, u32 *status, int retries);
+extern void mmc_power_off(struct mmc_host *host);
+
+static void mmc_remove_defective_card(struct mmc_host *host)
+{
+	if (!host || !host->card) {
+		pr_err("%s: WARN: host is NULL\n", __func__);
+		return;
+	}
+
+	if (mmc_card_sd(host->card)) {
+		mmc_card_set_removed(host->card);
+		mmc_power_off(host);
+		pr_info("%s defect card removed\n", __func__);
+	}
+}
 
 static inline void mmc_blk_clear_packed(struct mmc_queue_req *mqrq)
 {
@@ -1347,8 +1362,10 @@ static int mmc_blk_reset(struct mmc_blk_data *md, struct mmc_host *host,
 {
 	int err;
 
-	if (md->reset_done & type)
+	if (mmc_card_sd(host->card) && (md->reset_done & type)) {
+		pr_err("%s: mmc_blk_reset return EEXIST\n", mmc_hostname(host));
 		return -EEXIST;
+	}
 
 	md->reset_done |= type;
 	err = mmc_hw_reset(host);
@@ -2197,7 +2214,7 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
 	struct mmc_blk_request *brq = &mq->mqrq_cur->brq;
-	int ret = 1, disable_multi = 0, retry = 0, type, retune_retry_done = 0;
+	int ret = 1, disable_multi = 0, type, retune_retry_done = 0;
 	enum mmc_blk_status status;
 	struct mmc_queue_req *mq_rq;
 	struct request *req = rqc;
@@ -2282,19 +2299,39 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 			break;
 		case MMC_BLK_CMD_ERR:
 			ret = mmc_blk_cmd_err(md, card, brq, req, ret);
-			if (mmc_blk_reset(md, card->host, type))
+			if (mmc_blk_reset(md, card->host, type)) {
+				mmc_remove_defective_card(card->host);
 				goto cmd_abort;
+			}
 			if (!ret)
 				goto start_new_req;
 			break;
+		case MMC_BLK_ECC_ERR:
+			pr_err("%s MMC_BLK_ECC_ERR\n",
+				req->rq_disk->disk_name);
+			/*
+			 * make ECC as normal err,for decrease reset time.
+			 * <disable_multi = 1> will cause reset time increase
+			 * ecc error most is the hardware issues so put it in
+			 * front
+			 */
 		case MMC_BLK_RETRY:
 			retune_retry_done = brq->retune_retry_done;
+			pr_err("%s MMC_BLK_ECC_ERR\n",
+				req->rq_disk->disk_name);
+			/*
+			* when have error we will reset the card,
+			* so disable retry
+			*/
+			/*
 			if (retry++ < 5)
 				break;
+			*/
 			/* Fall through */
 		case MMC_BLK_ABORT:
 			if (!mmc_blk_reset(md, card->host, type))
 				break;
+			mmc_remove_defective_card(card->host);
 			goto cmd_abort;
 		case MMC_BLK_DATA_ERR: {
 			int err;
@@ -2302,29 +2339,13 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 			err = mmc_blk_reset(md, card->host, type);
 			if (!err)
 				break;
+			mmc_remove_defective_card(card->host);
 			if (err == -ENODEV ||
 				mmc_packed_cmd(mq_rq->cmd_type))
 				goto cmd_abort;
 			/* Fall through */
 		}
-		case MMC_BLK_ECC_ERR:
-			if (brq->data.blocks > 1) {
-				/* Redo read one sector at a time */
-				pr_warn("%s: retrying using single block read\n",
-					req->rq_disk->disk_name);
-				disable_multi = 1;
-				break;
-			}
-			/*
-			 * After an error, we redo I/O one sector at a
-			 * time, so we only reach here after trying to
-			 * read a single sector.
-			 */
-			ret = blk_end_request(req, -EIO,
-						brq->data.blksz);
-			if (!ret)
-				goto start_new_req;
-			break;
+
 		case MMC_BLK_NOMEDIUM:
 			goto cmd_abort;
 		default:
@@ -2417,6 +2438,14 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		if (card->host->areq)
 			mmc_blk_issue_rw_rq(mq, NULL);
 		if (req->cmd_flags & REQ_SECURE)
+			ret = mmc_blk_issue_secdiscard_rq(mq, req);
+		else if (card != NULL
+			&& card->cid.manfid == 0x6f
+			&& card->cid.prod_name[0] == 'C'
+			&& card->cid.prod_name[1] == 'B'
+			&& card->cid.prod_name[2] == 'A'
+			&& card->cid.prod_name[3] == 'D'
+			&& card->cid.prod_name[4] == 'S')
 			ret = mmc_blk_issue_secdiscard_rq(mq, req);
 		else
 			ret = mmc_blk_issue_discard_rq(mq, req);

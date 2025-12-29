@@ -50,6 +50,14 @@ config MMC_BLOCK_BOUNCE
 
 	  If unsure, say Y here.
 
+config MMC_SMALLER_QUEUE_BOUNCESZ
+	bool "Use smaller bounce buffer for low memory buffer"
+	depends on MMC_BLOCK
+	help
+	  The bigger the buffer, the better the performance. But
+	  there are some low memory phones have no enough memory,
+	  so set smaller bounce size for low memory phones.
+
 config SDIO_UART
 	tristate "SDIO UART/GPS class support"
 	depends on TTY

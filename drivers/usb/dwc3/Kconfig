@@ -104,4 +104,14 @@ config USB_DWC3_QCOM
 	  Recent Qualcomm SoCs ship with one DesignWare Core USB3 IP inside,
 	  say 'Y' or 'M' if you have one such device.
 
+config USB_DWC3_SPRD
+	bool "Support for Spreadtrum on-chip DWC3 DRD Core"
+	depends on ARCH_SPRD || COMPILE_TEST
+	default USB_DWC3
+	help
+	  DesignWare USB3.0 controller is a Superspeed USB3.0 Controller
+	  which can be configured for device-only, host-only and Dual-Role
+	  operation. For more information about this controller please
+	  refer to http://www.spreadtrum.com.
+
 endif

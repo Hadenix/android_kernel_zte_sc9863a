@@ -335,4 +335,10 @@ config CLKSRC_ST_LPC
 	  Enable this option to use the Low Power controller timer
 	  as clocksource.
 
+config CLKSRC_SPRD
+	bool
+	help
+	  This enables clocksource(include clockevent) driver for the
+	  sprd timer found in a arm or arm64 based socs
+
 endmenu

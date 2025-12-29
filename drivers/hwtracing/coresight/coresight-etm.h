@@ -139,10 +139,15 @@
 /**
  * struct etm_drvdata - specifics associated to an ETM component
  * @base:	memory mapped base address for this component.
+ * @ts_base:	memory mapped base address for timestamp.
  * @dev:	the device entity associated to this component.
  * @atclk:	optional clock for the core parts of the ETM.
+ * @clk_cs:	coresight clock.
+ * @clk_cs_src:	coresight clock source select.
  * @csdev:	component vitals needed by the framework.
  * @spinlock:	only one at a time pls.
+ * @nb:		hotplog notify info.
+ * @pm_nb:	pm notify info.
  * @cpu:	the cpu this component is affined to.
  * @port_size:	port size as reported by ETMCR bit 4-6 and 21.
  * @arch:	ETM/PTM version number.
@@ -193,10 +198,15 @@
  */
 struct etm_drvdata {
 	void __iomem			*base;
+	void __iomem			*ts_base;
 	struct device			*dev;
 	struct clk			*atclk;
+	struct clk			*clk_cs;
+	struct clk			*clk_cs_src;
 	struct coresight_device		*csdev;
 	spinlock_t			spinlock;
+	struct notifier_block		nb;
+	struct notifier_block		pm_nb;
 	int				cpu;
 	int				port_size;
 	u8				arch;

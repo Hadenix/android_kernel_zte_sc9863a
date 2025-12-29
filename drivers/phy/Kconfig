@@ -391,4 +391,35 @@ config PHY_CYGNUS_PCIE
 	  Enable this to support the Broadcom Cygnus PCIe PHY.
 	  If unsure, say N.
 
+config PHY_INTEL_SPRD
+	tristate "intel phy chip on spreadtrum"
+	select GENERIC_PHY
+	help
+	  Enable this to support intel phy chip on spreadtrum platform.
+
+config PHY_SYNOPSYS_SPRD
+	tristate "synopsys phy chip on spreadtrum"
+	select GENERIC_PHY
+	help
+	  Enable this to support synopsys phy chip on spreadtrum platform.
+
+config PHY_MEGACORE_SPRD
+	tristate "megacore phy driver of SPRD"
+	select GENERIC_PHY
+	help
+	  Enable this to support the mipi dphy driver.
+
+config PHY_VIDEO_MIPI_SPRD
+	tristate "common mipi phy driver of SPRD"
+	select GENERIC_PHY
+	help
+	  Enable this to support the mipi dphy driver.
+
+config PHY_MIPI_LOG_SPRD
+	tristate "mipi debug driver for spreadtrum"
+	select GENERIC_PHY
+	help
+	  Enable this to support the mipi log driver for spreadtrum.
+
+source "drivers/phy/dsi_1_21a/Kconfig"
 endmenu

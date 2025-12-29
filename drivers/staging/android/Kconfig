@@ -14,6 +14,23 @@ config ASHMEM
 	  It is, in theory, a good memory allocator for low-memory devices,
 	  because it can discard shared memory units when under memory pressure.
 
+config ANDROID_LOGGER
+	tristate "Android log driver"
+	default n
+	---help---
+	  This adds support for system-wide logging using four log buffers.
+
+	  These are:
+
+	      1: main
+	      2: events
+	      3: radio
+	      4: system
+
+	  Log reading and writing is performed via normal Linux reads and
+	  optimized writes. This optimization avoids logging having too
+	  much overhead in the system.
+
 config ANDROID_TIMED_OUTPUT
 	bool "Timed output class driver"
 	default y
@@ -47,6 +64,38 @@ config ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES
 	  /sys/module/lowmemorykiller/parameters/adj and convert them
 	  to oom_score_adj values.
 
+config OOM_NOTIFIER
+	bool  "Android OOM Notifier"
+	default n
+	help
+	Using a Android-Style oom-killer instead of linux's native OOM_killer.
+
+config MULTIPLE_OOM_KILLER
+	bool "kill multiple tasks"
+	depends on OOM_NOTIFIER
+	default y
+	help
+	lmk select multiple tasks to kill when oom
+
+config MULTIPLE_OOM_KILL_COUNT
+	int "Maxinum count of tasks will be killed by lmk when oom"
+	depends on OOM_NOTIFIER
+	default 3
+	help
+	lmk select multiple tasks to kill when oom
+
+config ANDROID_LOW_MEMORY_KILLER_MEMINFO
+	bool "Show Meminfo when lmk invoked"
+	default n
+	help
+	  Show memory information when lmk kills process
+
+config LOWMEM_NOTIFY_KOBJ
+	bool "lowmem notify by kobj"
+	default n
+	---help---
+	  notify user-land app when the system is in low memory, currently only used by kaios
+
 config SYNC
 	bool "Synchronization framework"
 	default n
@@ -75,6 +124,17 @@ config SW_SYNC_USER
 	  *WARNING* improper use of this can result in deadlocking kernel
 	  drivers from userspace.
 
+config SMART_RECLAIM
+	bool "Enable smart reclaim"
+	default y
+	depends on PROCESS_RECLAIM
+	---help---
+	  When enabled, memory pages of background processes will be reclaimed.
+	  Depending on if the process is an application or service.
+	  In case of service, advise kernel to reclaim file backed pages
+	  of background processes(file tpyes .dex, .jar and/or .apk).
+	  This triggered by writing soft to /proc/<pid>/reclaim from user space.
+
 config ANDROID_VSOC
 	tristate "Android Virtual SoC support"
 	default n
@@ -88,6 +148,21 @@ source "drivers/staging/android/ion/Kconfig"
 
 source "drivers/staging/android/fiq_debugger/Kconfig"
 
+config RUNTIME_COMPCACHE
+        bool "Android rtcc"
+        depends on ZRAM && ANDROID
+        default n
+        ---help---
+        This option enables rtcc v3 for android
+	rtcc is another method for reclaim pages
+
+config KSWAPD_NOSWAP
+        bool "Disable swap in kswapd"
+        depends on RUNTIME_COMPCACHE
+        default n
+        ---help---
+	This option controls swap action in kswapd
+	It will have kswapd not reclaim anon pages
 endif # if ANDROID
 
 endmenu

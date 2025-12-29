@@ -17,6 +17,7 @@ obj-$(CONFIG_LCD_S6E63M0)		+= s6e63m0.o
 obj-$(CONFIG_LCD_TDO24M)		+= tdo24m.o
 obj-$(CONFIG_LCD_TOSA)			+= tosa_lcd.o
 obj-$(CONFIG_LCD_VGG2432A4)		+= vgg2432a4.o
+obj-$(CONFIG_LCD_SC2705)		+= sc2705_bllcd.o
 
 obj-$(CONFIG_BACKLIGHT_88PM860X)	+= 88pm860x_bl.o
 obj-$(CONFIG_BACKLIGHT_AAT2870)		+= aat2870_bl.o
@@ -50,6 +51,9 @@ obj-$(CONFIG_BACKLIGHT_PANDORA)		+= pandora_bl.o
 obj-$(CONFIG_BACKLIGHT_PCF50633)	+= pcf50633-backlight.o
 obj-$(CONFIG_BACKLIGHT_PM8941_WLED)	+= pm8941-wled.o
 obj-$(CONFIG_BACKLIGHT_PWM)		+= pwm_bl.o
+obj-$(CONFIG_BACKLIGHT_SC2721_BLTCLED)	+= sc2721_bltcled_bl.o
+obj-$(CONFIG_BACKLIGHT_SC2721_RGBLED)	+= sc2721_rgbled_bl.o
+obj-$(CONFIG_BACKLIGHT_SC2703)		+= sc2703_bl.o
 obj-$(CONFIG_BACKLIGHT_SAHARA)		+= kb3886_bl.o
 obj-$(CONFIG_BACKLIGHT_SKY81452)	+= sky81452-backlight.o
 obj-$(CONFIG_BACKLIGHT_TOSA)		+= tosa_bl.o

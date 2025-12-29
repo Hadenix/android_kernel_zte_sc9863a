@@ -92,7 +92,7 @@ static int xhci_plat_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
-		return irq;
+		return -ENODEV;
 
 	/* Try to set 64-bit DMA first */
 	if (WARN_ON(!pdev->dev.dma_mask))
@@ -132,9 +132,6 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		ret = clk_prepare_enable(clk);
 		if (ret)
 			goto put_hcd;
-	} else if (PTR_ERR(clk) == -EPROBE_DEFER) {
-		ret = -EPROBE_DEFER;
-		goto put_hcd;
 	}
 
 	if (of_device_is_compatible(pdev->dev.of_node,
@@ -158,9 +155,14 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		goto disable_clk;
 	}
 
-	if ((node && of_property_read_bool(node, "usb3-lpm-capable")) ||
-			(pdata && pdata->usb3_lpm_capable))
-		xhci->quirks |= XHCI_LPM_SUPPORT;
+	/*
+	 * Set the xHCI pointer before xhci_plat_setup() (aka hcd_driver.reset)
+	 * is called by usb_add_hcd().
+	 */
+	*((struct xhci_hcd **) xhci->shared_hcd->hcd_priv) = xhci;
+
+	if (HCC_MAX_PSA(xhci->hcc_params) >= 4)
+		xhci->shared_hcd->can_do_streams = 1;
 
 	hcd->usb_phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
 	if (IS_ERR(hcd->usb_phy)) {
@@ -174,16 +176,38 @@ static int xhci_plat_probe(struct platform_device *pdev)
 			goto put_usb3_hcd;
 	}
 
+	if (!hcd->usb_phy) {
+		hcd->usb_phy = devm_usb_get_phy_by_phandle(pdev->dev.parent,
+							   "usb-phy", 0);
+		if (IS_ERR(hcd->usb_phy)) {
+			ret = PTR_ERR(hcd->usb_phy);
+			if (ret == -EPROBE_DEFER)
+				goto put_usb3_hcd;
+			hcd->usb_phy = NULL;
+		} else {
+			ret = usb_phy_init(hcd->usb_phy);
+			if (ret)
+				goto put_usb3_hcd;
+		}
+	}
+
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (ret)
 		goto disable_usb_phy;
 
-	if (HCC_MAX_PSA(xhci->hcc_params) >= 4)
-		xhci->shared_hcd->can_do_streams = 1;
-
 	ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED);
 	if (ret)
 		goto dealloc_usb2_hcd;
+
+	if ((node && of_property_read_bool(node, "usb3-lpm-capable")) ||
+			(pdata && pdata->usb3_lpm_capable))
+		xhci->quirks |= XHCI_LPM_SUPPORT;
+
+	if (pdata && pdata->usb3_slow_suspend)
+		xhci->quirks |= XHCI_SLOW_SUSPEND;
+
+	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
 
 	return 0;
 
@@ -213,8 +237,7 @@ static int xhci_plat_remove(struct platform_device *dev)
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 	struct clk *clk = xhci->clk;
 
-	xhci->xhc_state |= XHCI_STATE_REMOVING;
-
+	pm_runtime_disable(&dev->dev);
 	usb_remove_hcd(xhci->shared_hcd);
 	usb_phy_shutdown(hcd->usb_phy);
 
@@ -231,35 +254,46 @@ static int xhci_plat_remove(struct platform_device *dev)
 #ifdef CONFIG_PM_SLEEP
 static int xhci_plat_suspend(struct device *dev)
 {
-	struct usb_hcd	*hcd = dev_get_drvdata(dev);
-	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
-
-	/*
-	 * xhci_suspend() needs `do_wakeup` to know whether host is allowed
-	 * to do wakeup during suspend. Since xhci_plat_suspend is currently
-	 * only designed for system suspend, device_may_wakeup() is enough
-	 * to dertermine whether host is allowed to do wakeup. Need to
-	 * reconsider this when xhci_plat_suspend enlarges its scope, e.g.,
-	 * also applies to runtime suspend.
-	 */
-	return xhci_suspend(xhci, device_may_wakeup(dev));
+	return 0;
 }
 
 static int xhci_plat_resume(struct device *dev)
 {
-	struct usb_hcd	*hcd = dev_get_drvdata(dev);
-	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	return 0;
+}
+#endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_PM
+static int xhci_plat_runtime_suspend(struct device *dev)
+{
+	struct usb_hcd  *hcd = dev_get_drvdata(dev);
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+
+	return xhci_suspend(xhci, device_may_wakeup(dev));
+}
+
+static int xhci_plat_runtime_resume(struct device *dev)
+{
+	struct usb_hcd  *hcd = dev_get_drvdata(dev);
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 
 	return xhci_resume(xhci, 0);
 }
 
+static int xhci_plat_runtime_idle(struct device *dev)
+{
+	return 0;
+}
+#endif /* CONFIG_PM */
+
 static const struct dev_pm_ops xhci_plat_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(xhci_plat_suspend, xhci_plat_resume)
+
+	SET_RUNTIME_PM_OPS(
+		xhci_plat_runtime_suspend,
+		xhci_plat_runtime_resume,
+		xhci_plat_runtime_idle)
 };
-#define DEV_PM_OPS	(&xhci_plat_pm_ops)
-#else
-#define DEV_PM_OPS	NULL
-#endif /* CONFIG_PM */
 
 #ifdef CONFIG_OF
 static const struct of_device_id usb_xhci_of_match[] = {
@@ -286,7 +320,7 @@ static struct platform_driver usb_xhci_driver = {
 	.remove	= xhci_plat_remove,
 	.driver	= {
 		.name = "xhci-hcd",
-		.pm = DEV_PM_OPS,
+		.pm = &xhci_plat_pm_ops,
 		.of_match_table = of_match_ptr(usb_xhci_of_match),
 		.acpi_match_table = ACPI_PTR(usb_xhci_acpi_match),
 	},

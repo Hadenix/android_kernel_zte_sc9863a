@@ -442,6 +442,12 @@ config CHARGER_BQ25890
 	help
 	  Say Y to enable support for the TI BQ25890 battery charger.
 
+config CHARGER_BQ25896
+	tristate "TI BQ25896 battery charger driver"
+	depends on I2C && GPIOLIB
+	help
+	  Say Y to enable support for the TI BQ25896 battery charger.
+
 config CHARGER_SMB347
 	tristate "Summit Microelectronics SMB347 Battery Charger"
 	depends on I2C
@@ -508,6 +514,99 @@ config AXP20X_POWER
 	help
 	  This driver provides support for the power supply features of
 	  AXP20x PMIC.
+
+config BATTERY_SPRD
+	tristate "Spreadtrum  SoC's power supply& mesurement controller"
+	help
+	  Say Y to include support for Spreadtrum SoC's power supply and
+	  mesurement controller drive
+
+config CHARGER_SC2705
+	tristate "Spreadtrum Communications SC2705 Charger support"
+	depends on MFD_SC2705
+	help
+	  Say Y here to enable support for charger unit of the SC2705 Charger.
+	  This driver can also be built as a module. If so, the module will be
+	  called sc2705-charger.
+
+config CHARGER_SC2703
+	tristate "Spreadtrum Communications SC2703 Charger support"
+	depends on MFD_SC2703
+	help
+	  Say Y here to enable support for charger unit of the SC2703 Charger.
+	  This driver can also be built as a module. If so, the module will be
+	  called sc2703-charger.
+
+config CHARGER_SC2723
+	tristate "Spreadtrum 2723 Charger"
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2723 Charger.
+
+config CHARGER_SC2721
+	tristate "Spreadtrum 2721 Charger"
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2721 Charger.
+
+config CHARGER_SC2720
+	tristate "Spreadtrum 2720 Charger"
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2720 Charger.
+
+config CHARGER_SC2731
+	tristate "Spreadtrum 2731 Charger"
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2731 Charger.
+
+config CHARGER_FAN54015
+	tristate "Fairchild FAN54015 Charger"
+	depends on I2C
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Fairchild FAN54015 Battery Charger.
+
+config CHARGER_SPRD2701
+	tristate "Spreadtrum 2701 Charger"
+	depends on I2C
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2701 Battery Charger.
+
+config CHARGER_SPRD2700
+	tristate "Spreadtrum 2700 Charger"
+	depends on I2C
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 2700 Battery Charger.
+
+config CHARGER_BQ2560X
+	tristate "TI BQ2560x battery charger driver"
+	depends on I2C
+	depends on BATTERY_SPRD
+	help
+	  Say Y to enable support for the TI BQ2560x battery charger.
+
+config CHARGER_SYV697
+	tristate "Silergy SYV697 battery charger driver"
+	depends on I2C
+	depends on BATTERY_SPRD
+	help
+	  Say Y to enable support for the Silergy SYV697 battery charger.
+
+config FGU_SC27XX
+	tristate "Spreadtrum 27xx fgu"
+	depends on BATTERY_SPRD
+	help
+	  Say Y to include support for Spreadtrum 27xx fgu.
+
+config BATTERY_CAPACITY_LEARNING
+	bool "Battery Capacity Learning driver"
+	default n
+	help
+	  Say Y here to enable the "BATTERY CAPACITY LEARNING" driver
 
 source "drivers/power/reset/Kconfig"
 

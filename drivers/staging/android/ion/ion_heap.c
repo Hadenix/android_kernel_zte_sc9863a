@@ -188,7 +188,6 @@ static size_t _ion_heap_freelist_drain(struct ion_heap *heap, size_t size,
 
 	if (ion_heap_freelist_size(heap) == 0)
 		return 0;
-
 	spin_lock(&heap->free_lock);
 	if (size == 0)
 		size = heap->free_list_size;
@@ -261,7 +260,7 @@ int ion_heap_init_deferred_free(struct ion_heap *heap)
 		       __func__);
 		return PTR_ERR_OR_ZERO(heap->task);
 	}
-	sched_setscheduler(heap->task, SCHED_IDLE, &param);
+	sched_setscheduler(heap->task, SCHED_NORMAL, &param);
 	return 0;
 }
 

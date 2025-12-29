@@ -36,22 +36,16 @@
 #define CREATE_TRACE_POINTS
 #include "adf_trace.h"
 
-#define ADF_SHORT_FENCE_TIMEOUT (1 * MSEC_PER_SEC)
-#define ADF_LONG_FENCE_TIMEOUT (10 * MSEC_PER_SEC)
+#define ADF_FENCE_TIMEOUT (3 * MSEC_PER_SEC)
 
 static DEFINE_IDR(adf_devices);
 
 static void adf_fence_wait(struct adf_device *dev, struct sync_fence *fence)
 {
-	/* sync_fence_wait() dumps debug information on timeout.  Experience
-	   has shown that if the pipeline gets stuck, a short timeout followed
-	   by a longer one provides useful information for debugging. */
-	int err = sync_fence_wait(fence, ADF_SHORT_FENCE_TIMEOUT);
+	/* modify the fence wait strategy . only wait one time(3s). */
+	int err = sync_fence_wait(fence, ADF_FENCE_TIMEOUT);
 	if (err >= 0)
 		return;
-
-	if (err == -ETIME)
-		err = sync_fence_wait(fence, ADF_LONG_FENCE_TIMEOUT);
 
 	if (err < 0)
 		dev_warn(&dev->base.dev, "error waiting on fence: %d\n", err);
@@ -107,11 +101,22 @@ void adf_post_cleanup(struct adf_device *dev, struct adf_pending_post *post)
 static void adf_sw_advance_timeline(struct adf_device *dev)
 {
 #ifdef CONFIG_SW_SYNC
-	sw_sync_timeline_inc(dev->timeline, 1);
+	if (dev->timeline)
+		sw_sync_timeline_inc(dev->timeline, 1);
 #else
 	BUG();
 #endif
 }
+void adf_post_timeline_signaled(struct adf_device *dev)
+{
+	/*only can signal once*/
+	if (dev->has_signaled)
+		return;
+	dev->has_signaled = true;
+	adf_sw_advance_timeline(dev);
+}
+
+EXPORT_SYMBOL(adf_post_timeline_signaled);
 
 static void adf_post_work_func(struct kthread_work *work)
 {
@@ -137,11 +142,15 @@ static void adf_post_work_func(struct kthread_work *work)
 
 		dev->ops->post(dev, &post->config, post->state);
 
-		if (dev->ops->advance_timeline)
-			dev->ops->advance_timeline(dev, &post->config,
-					post->state);
-		else
-			adf_sw_advance_timeline(dev);
+		if (dev->has_signaled)
+			dev->has_signaled = false;
+		else {
+			if (dev->ops->advance_timeline)
+				dev->ops->advance_timeline(dev, &post->config,
+						post->state);
+			else
+				adf_sw_advance_timeline(dev);
+		}
 
 		list_del(&post->head);
 		if (dev->onscreen)
@@ -529,15 +538,17 @@ int adf_device_init(struct adf_device *dev, struct device *parent,
 		return -EINVAL;
 	}
 
-	if (!ops->complete_fence && !ops->advance_timeline) {
+	if (!ops->release_fence && !ops->present_fence &&
+			!ops->advance_timeline) {
 		if (!IS_ENABLED(CONFIG_SW_SYNC)) {
 			pr_err("%s: device requires sw_sync but it is not enabled in the kernel\n",
 					__func__);
 			return -EINVAL;
 		}
-	} else if (!(ops->complete_fence && ops->advance_timeline)) {
-		pr_err("%s: device must implement both complete_fence and advance_timeline, or implement neither\n",
-				__func__);
+	} else if (!(ops->release_fence && ops->present_fence &&
+			ops->advance_timeline)) {
+		pr_err("%s: device cannot partially implement hardware fences\n",
+						__func__);
 		return -EINVAL;
 	}
 

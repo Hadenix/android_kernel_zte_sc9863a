@@ -25,6 +25,8 @@
 
 struct regmap_mmio_context {
 	void __iomem *regs;
+	unsigned long reg_addr;
+	unsigned setclr_offset;
 	unsigned reg_bytes;
 	unsigned val_bytes;
 	unsigned pad_bytes;
@@ -83,6 +85,34 @@ regmap_mmio_get_offset(const void *reg, size_t reg_size)
 	default:
 		BUG();
 	}
+}
+
+static int regmap_mmio_write_update_bits(void *context, unsigned int reg,
+				    unsigned int mask, unsigned int val)
+{
+	struct regmap_mmio_context *ctx = context;
+	int ret;
+	int set, clr;
+	int __maybe_unused cval;
+
+	if (!IS_ERR(ctx->clk)) {
+		ret = clk_enable(ctx->clk);
+		if (ret < 0)
+			return ret;
+	}
+	set = val & mask;
+	clr = ~set & mask;
+	writel(set, ctx->regs + reg + ctx->setclr_offset);
+	writel(clr, ctx->regs + reg + 2 * ctx->setclr_offset);
+
+#ifdef CONFIG_REGMAP_SPRD_DEBUG
+	cval = readl(ctx->regs + reg);
+	if ((cval & mask) != (val & mask))
+		panic("reg:0x%lx mask:%x val:%x not support set/clr\n",
+		ctx->reg_addr + reg, mask, val);
+#endif
+
+	return 0;
 }
 
 static int regmap_mmio_gather_write(void *context,
@@ -213,6 +243,7 @@ static struct regmap_bus regmap_mmio = {
 	.free_context = regmap_mmio_free_context,
 	.reg_format_endian_default = REGMAP_ENDIAN_NATIVE,
 	.val_format_endian_default = REGMAP_ENDIAN_NATIVE,
+	.reg_update_bits = regmap_mmio_write_update_bits,
 };
 
 static struct regmap_mmio_context *regmap_mmio_gen_context(struct device *dev,
@@ -271,6 +302,8 @@ static struct regmap_mmio_context *regmap_mmio_gen_context(struct device *dev,
 	ctx->val_bytes = config->val_bits / 8;
 	ctx->reg_bytes = config->reg_bits / 8;
 	ctx->pad_bytes = config->pad_bits / 8;
+	ctx->reg_addr = config->reg_addr;
+	ctx->setclr_offset = config->setclr_offset;
 	ctx->clk = ERR_PTR(-ENODEV);
 
 	if (clk_id == NULL)

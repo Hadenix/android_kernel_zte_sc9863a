@@ -18,10 +18,13 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
+#include <linux/cpu.h>
+#include <linux/cpu_pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/coresight.h>
 #include <linux/amba/bus.h>
 #include <linux/clk.h>
+#include <linux/of.h>
 
 #include "coresight-priv.h"
 
@@ -39,6 +42,8 @@
  * @atclk:	optional clock for the core parts of the funnel.
  * @csdev:	component vitals needed by the framework.
  * @priority:	port selection order.
+ * @spinlock:   Only one at a time pls.
+ * @inport:	The open inport of funnel device..
  */
 struct funnel_drvdata {
 	void __iomem		*base;
@@ -46,6 +51,8 @@ struct funnel_drvdata {
 	struct clk		*atclk;
 	struct coresight_device	*csdev;
 	unsigned long		priority;
+	int			inport;
+	struct notifier_block	nb;
 };
 
 static void funnel_enable_hw(struct funnel_drvdata *drvdata, int port)
@@ -71,6 +78,7 @@ static int funnel_enable(struct coresight_device *csdev, int inport,
 
 	pm_runtime_get_sync(drvdata->dev);
 	funnel_enable_hw(drvdata, inport);
+	drvdata->inport |= (1 << inport);
 
 	dev_info(drvdata->dev, "FUNNEL inport %d enabled\n", inport);
 	return 0;
@@ -95,6 +103,7 @@ static void funnel_disable(struct coresight_device *csdev, int inport,
 	struct funnel_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
 	funnel_disable_hw(drvdata, inport);
+	drvdata->inport &= ~(1 << inport);
 	pm_runtime_put(drvdata->dev);
 
 	dev_info(drvdata->dev, "FUNNEL inport %d disabled\n", inport);
@@ -108,6 +117,49 @@ static const struct coresight_ops_link funnel_link_ops = {
 static const struct coresight_ops funnel_cs_ops = {
 	.link_ops	= &funnel_link_ops,
 };
+
+static int funnel_find_source(struct coresight_device *csdev,
+	int cpu)
+{
+	struct coresight_device *parent_csdev;
+	struct coresight_connection *conns;
+	int i, ret;
+
+	for (i = csdev->nr_outport; i < csdev->nr_outport +
+		csdev->nr_inport; i++) {
+		conns = &csdev->conns[i];
+		if (conns->parent_dev != NULL) {
+			parent_csdev = conns->parent_dev;
+			/* Check the parent device */
+			if (parent_csdev->type == CORESIGHT_DEV_TYPE_SOURCE) {
+				/* It is the source device. */
+				if ((parent_csdev->enable == true) &&
+					(parent_csdev->cpu == cpu)) {
+					/* It is source dev, and enabled,
+					 * it needs to enable the pach.
+					 */
+					return 0;
+				}
+				/* Check next inport */
+				continue;
+			} else {
+				/* It is't source device,
+				 * needs to recursion check.
+				 */
+				ret = funnel_find_source(conns->parent_dev,
+					 cpu);
+				if (ret != -1)
+					/* Get the enable source. */
+					return ret;
+			}
+		} else {
+			/* It is first device, but not source device. */
+			return -1;
+		}
+	}
+	/* Do not get enabled source device. */
+	return -1;
+}
 
 static ssize_t priority_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
@@ -169,6 +221,40 @@ static struct attribute *coresight_funnel_attrs[] = {
 };
 ATTRIBUTE_GROUPS(coresight_funnel);
 
+static int funnel_cpu_pm_notify(struct notifier_block *self,
+				    unsigned long action, void *hcpu)
+{
+	int inport, eb_port, port_lgcnum, this_cpu = 0;
+	struct funnel_drvdata *pdata =
+		container_of(self, struct funnel_drvdata, nb);
+
+	this_cpu = raw_smp_processor_id();
+
+	switch (action) {
+	case CPU_PM_ENTER:
+		break;
+	case CPU_PM_ENTER_FAILED:
+	case CPU_PM_EXIT:
+		if (pdata->inport) {
+			inport = funnel_find_source(pdata->csdev, this_cpu);
+			if (!inport) {
+				eb_port = pdata->inport;
+				while (eb_port) {
+					port_lgcnum = __ffs(eb_port);
+					eb_port &= (eb_port - 1);
+					funnel_enable_hw(pdata, port_lgcnum);
+				}
+			}
+		}
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block funnel_cpu_pm_notifier = {
+	.notifier_call = funnel_cpu_pm_notify,
+};
+
 static int funnel_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	int ret;
@@ -219,8 +305,10 @@ static int funnel_probe(struct amba_device *adev, const struct amba_id *id)
 	desc->dev = dev;
 	desc->groups = coresight_funnel_groups;
 	drvdata->csdev = coresight_register(desc);
+	drvdata->nb = funnel_cpu_pm_notifier;
 	if (IS_ERR(drvdata->csdev))
 		return PTR_ERR(drvdata->csdev);
+	cpu_pm_register_notifier(&drvdata->nb);
 
 	dev_info(dev, "FUNNEL initialized\n");
 	return 0;
@@ -230,6 +318,7 @@ static int funnel_remove(struct amba_device *adev)
 {
 	struct funnel_drvdata *drvdata = amba_get_drvdata(adev);
 
+	cpu_pm_unregister_notifier(&drvdata->nb);
 	coresight_unregister(drvdata->csdev);
 	return 0;
 }
@@ -257,7 +346,8 @@ static int funnel_runtime_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops funnel_dev_pm_ops = {
-	SET_RUNTIME_PM_OPS(funnel_runtime_suspend, funnel_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(funnel_runtime_suspend, funnel_runtime_resume,
+		 NULL)
 };
 
 static struct amba_id funnel_ids[] = {

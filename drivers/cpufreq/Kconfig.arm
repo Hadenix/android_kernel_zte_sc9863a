@@ -217,6 +217,33 @@ config ARM_SPEAR_CPUFREQ
 	help
 	  This adds the CPUFreq driver support for SPEAr SOCs.
 
+config ARM_SPRD_CPUFREQ
+		tristate "Spreadtrum based cpufreq driver for frequency scaling "
+		depends on ARCH_SPRD && CPU_FREQ
+		select PM_OPP
+	default y
+		help
+		  This adds cpufreq driver support for Spreadtrum SoCs.
+		  If in doubt, say N.
+
+config ARM_SPRD_CPUFREQHW_SHARKL3
+	bool "Spreadtrum based HW cpufreq driver for sharkl3"
+	depends on ARCH_SPRD && CPU_FREQ && ARM_SPRD_CPUFREQ
+	default n
+	help
+		HW dvfs API was add to
+		    support for Spreadtrum SoCs
+		Such as sharkl3
+		If in doubt, say N
+
+config ARM_SPRD_DUMMY_CPUFREQ
+	tristate "sprd dummy CPUfreq driver"
+	depends on ARCH_SPRD && CPU_FREQ
+	select PM_OPP
+	default n
+	help
+	  This adds a sprd dummy CPUfreq driver only for vdk platform.
+
 config ARM_TEGRA20_CPUFREQ
 	bool "Tegra20 CPUFreq support"
 	depends on ARCH_TEGRA

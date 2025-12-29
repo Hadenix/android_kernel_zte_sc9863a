@@ -24,6 +24,7 @@
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
 #include <linux/slab.h>
+#include <linux/hwspinlock.h>
 
 static struct platform_driver syscon_driver;
 
@@ -33,6 +34,8 @@ static LIST_HEAD(syscon_list);
 struct syscon {
 	struct device_node *np;
 	struct regmap *regmap;
+	unsigned int hwspinlock_id;
+	void *hwspinlock_arg;
 	struct list_head list;
 };
 
@@ -42,13 +45,44 @@ static struct regmap_config syscon_regmap_config = {
 	.reg_stride = 4,
 };
 
+static unsigned long syscon_hwlock_flag;
+#define HWSPINLOCK_TIMEOUT		(~0U)
+static void syscon_lock(void *__lock)
+{
+	int ret = 0;
+
+	ret = hwspin_lock_timeout_irqsave((struct hwspinlock *)__lock,
+					  HWSPINLOCK_TIMEOUT,
+					  &syscon_hwlock_flag);
+	if (ret)
+		pr_err("Syscon:lock the hwlock failed.\n");
+}
+
+static void syscon_unlock(void *__lock)
+{
+	hwspin_unlock_irqrestore((struct hwspinlock *)__lock,
+				 &syscon_hwlock_flag);
+}
+
+static int syscon_get_hwspinlock_id(struct device_node *np,
+				    struct of_phandle_args *hwlock_args)
+{
+	if (of_parse_phandle_with_args(np, "hwlocks", "#hwlock-cells", 0,
+				       hwlock_args))
+		return -ENODEV;
+
+	return 0;
+}
+
 static struct syscon *of_syscon_register(struct device_node *np)
 {
 	struct syscon *syscon;
+	struct resource res;
 	struct regmap *regmap;
 	void __iomem *base;
 	int ret;
 	struct regmap_config syscon_config = syscon_regmap_config;
+	struct of_phandle_args hwlock_id;
 
 	if (!of_device_is_compatible(np, "syscon"))
 		return ERR_PTR(-EINVAL);
@@ -56,6 +90,11 @@ static struct syscon *of_syscon_register(struct device_node *np)
 	syscon = kzalloc(sizeof(*syscon), GFP_KERNEL);
 	if (!syscon)
 		return ERR_PTR(-ENOMEM);
+
+	if (of_address_to_resource(np, 0, &res)) {
+		ret = -ENOMEM;
+		goto err_map;
+	}
 
 	base = of_iomap(np, 0);
 	if (!base) {
@@ -66,8 +105,25 @@ static struct syscon *of_syscon_register(struct device_node *np)
 	/* Parse the device's DT node for an endianness specification */
 	if (of_property_read_bool(np, "big-endian"))
 		syscon_config.val_format_endian = REGMAP_ENDIAN_BIG;
-	 else if (of_property_read_bool(np, "little-endian"))
+	else if (of_property_read_bool(np, "little-endian"))
 		syscon_config.val_format_endian = REGMAP_ENDIAN_LITTLE;
+	if (of_property_read_bool(np, "setclr-offset"))
+		of_property_read_s32(np, "setclr-offset",
+			&syscon_config.setclr_offset);
+	else
+		syscon_config.setclr_offset = 0x1000;
+	syscon_config.reg_addr = res.start;
+	if (syscon_get_hwspinlock_id(np, &hwlock_id) == 0) {
+		syscon_config.hw_lock_arg =
+			of_hwspin_lock_request(np, "syscon");
+		if (!syscon_config.hw_lock_arg)
+			syscon_config.hw_lock_arg =
+			syscon_regmap_config.hw_lock_arg;
+		syscon_config.hw_lock = syscon_lock;
+		syscon_config.hw_unlock = syscon_unlock;
+		syscon->hwspinlock_id = hwlock_id.args[0];
+		syscon->hwspinlock_arg = syscon_config.hw_lock_arg;
+	}
 
 	regmap = regmap_init_mmio(NULL, base, &syscon_config);
 	if (IS_ERR(regmap)) {
@@ -95,14 +151,21 @@ err_map:
 struct regmap *syscon_node_to_regmap(struct device_node *np)
 {
 	struct syscon *entry, *syscon = NULL;
+	struct of_phandle_args hwlock_id;
+	int hwlock_flag = syscon_get_hwspinlock_id(np, &hwlock_id);
 
 	spin_lock(&syscon_list_slock);
-
-	list_for_each_entry(entry, &syscon_list, list)
+	list_for_each_entry(entry, &syscon_list, list) {
+		if (hwlock_flag == 0)
+			if(entry->hwspinlock_id == hwlock_id.args[0]) {
+				syscon_regmap_config.hw_lock_arg =
+					entry->hwspinlock_arg;
+			}
 		if (entry->np == np) {
 			syscon = entry;
 			break;
 		}
+	}
 
 	spin_unlock(&syscon_list_slock);
 

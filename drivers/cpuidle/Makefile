@@ -17,6 +17,8 @@ obj-$(CONFIG_ARM_ZYNQ_CPUIDLE)		+= cpuidle-zynq.o
 obj-$(CONFIG_ARM_U8500_CPUIDLE)         += cpuidle-ux500.o
 obj-$(CONFIG_ARM_AT91_CPUIDLE)          += cpuidle-at91.o
 obj-$(CONFIG_ARM_EXYNOS_CPUIDLE)        += cpuidle-exynos.o
+obj-$(CONFIG_ARM_SPRD_CPUIDLE)		+= cpuidle-sprd.o
+obj-$(CONFIG_ARM_SPRD_DUMMY_CPUIDLE)	+= cpuidle-sprd-dummy.o
 obj-$(CONFIG_ARM_CPUIDLE)		+= cpuidle-arm.o
 
 ###############################################################################

@@ -411,12 +411,12 @@ static void cpufreq_interactive_timer(unsigned long data)
 	 * floor frequency for the minimum sample time since last validated.
 	 */
 	max_fvtime = max(pcpu->pol_floor_val_time, pcpu->loc_floor_val_time);
-	if (new_freq < pcpu->floor_freq &&
-	    pcpu->target_freq >= pcpu->policy->cur) {
+	if (new_freq < pcpu->floor_freq) {
 		if (now - max_fvtime < tunables->min_sample_time) {
 			trace_cpufreq_interactive_notyet(
 				data, cpu_load, pcpu->target_freq,
 				pcpu->policy->cur, new_freq);
+			pcpu->target_freq = new_freq;
 			spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
 			goto rearm;
 		}
@@ -437,8 +437,10 @@ static void cpufreq_interactive_timer(unsigned long data)
 			pcpu->loc_floor_val_time = now;
 	}
 
-	if (pcpu->target_freq == new_freq &&
-			pcpu->target_freq <= pcpu->policy->cur) {
+	if (pcpu->policy->cur <= pcpu->policy->max &&
+			pcpu->policy->cur >= pcpu->policy->min &&
+			pcpu->target_freq == new_freq &&
+			pcpu->target_freq == pcpu->policy->cur) {
 		trace_cpufreq_interactive_already(
 			data, cpu_load, pcpu->target_freq,
 			pcpu->policy->cur, new_freq);
@@ -530,7 +532,7 @@ static void cpufreq_interactive_adjust_cpu(unsigned int cpu,
 		pcpu->pol_floor_val_time = fvt;
 	}
 
-	if (max_freq != policy->cur) {
+	if (max_freq != policy->cur || policy->cur > policy->max || policy->cur < policy->min) {
 		__cpufreq_driver_target(policy, max_freq, CPUFREQ_RELATION_H);
 		for_each_cpu(i, policy->cpus) {
 			pcpu = &per_cpu(cpuinfo, i);
@@ -1238,7 +1240,7 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 			pcpu->freq_table = freq_table;
 			pcpu->floor_freq = pcpu->target_freq;
 			pcpu->pol_floor_val_time =
-				ktime_to_us(ktime_get());
+				ktime_to_us(ktime_get()) - tunables->min_sample_time;
 			pcpu->loc_floor_val_time = pcpu->pol_floor_val_time;
 			pcpu->pol_hispeed_val_time = pcpu->pol_floor_val_time;
 			pcpu->loc_hispeed_val_time = pcpu->pol_floor_val_time;

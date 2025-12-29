@@ -359,6 +359,21 @@ config GPIO_SPEAR_SPICS
 	help
 	  Say yes here to support ST SPEAr SPI Chip Select as GPIO device
 
+config GPIO_SPRD
+	tristate "Spreadtrum GPIO support"
+	depends on GPIOLIB && ARCH_SPRD
+	help
+	  Say yes here to support Spreadtrum's GPIO interface. Most pins
+	  on Spreadtrum SoCs can be selected for GPIO which are
+	  controlled by this driver
+
+config GPIO_SPRD_PMIC
+	tristate "Spreadtrum PMIC eic support"
+	depends on GPIO_SPRD
+	help
+	  Say yes here to support Spreadtrum's PMIC eic interface. Most pins
+	  on PMIC can be selected for eic which are controlled by this driver
+
 config GPIO_STA2X11
 	bool "STA2x11/ConneXt GPIO support"
 	depends on MFD_STA2X11

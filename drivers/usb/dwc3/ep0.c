@@ -55,18 +55,25 @@ static const char *dwc3_ep0_state_string(enum dwc3_ep0_state state)
 	}
 }
 
-static void dwc3_ep0_prepare_one_trb(struct dwc3 *dwc, u8 epnum,
-		dma_addr_t buf_dma, u32 len, u32 type, bool chain)
+static int dwc3_ep0_start_trans(struct dwc3 *dwc, u8 epnum, dma_addr_t buf_dma,
+		u32 len, u32 type, bool chain)
 {
+	struct dwc3_gadget_ep_cmd_params params;
 	struct dwc3_trb			*trb;
 	struct dwc3_ep			*dep;
 
-	dep = dwc->eps[epnum];
+	int				ret;
 
-	trb = &dwc->ep0_trb[dep->free_slot];
+	dep = dwc->eps[epnum];
+	if (dep->flags & DWC3_EP_BUSY) {
+		dwc3_trace(trace_dwc3_ep0, "%s still busy", dep->name);
+		return 0;
+	}
+
+	trb = &dwc->ep0_trb[dep->trb_enqueue];
 
 	if (chain)
-		dep->free_slot++;
+		dep->trb_enqueue++;
 
 	trb->bpl = lower_32_bits(buf_dma);
 	trb->bph = upper_32_bits(buf_dma);
@@ -82,24 +89,14 @@ static void dwc3_ep0_prepare_one_trb(struct dwc3 *dwc, u8 epnum,
 		trb->ctrl |= (DWC3_TRB_CTRL_IOC
 				| DWC3_TRB_CTRL_LST);
 
-	trace_dwc3_prepare_trb(dep, trb);
-}
-
-static int dwc3_ep0_start_trans(struct dwc3 *dwc, u8 epnum)
-{
-	struct dwc3_gadget_ep_cmd_params params;
-	struct dwc3_ep			*dep;
-	int				ret;
-
-	dep = dwc->eps[epnum];
-	if (dep->flags & DWC3_EP_BUSY) {
-		dwc3_trace(trace_dwc3_ep0, "%s still busy", dep->name);
+	if (chain)
 		return 0;
-	}
 
 	memset(&params, 0, sizeof(params));
 	params.param0 = upper_32_bits(dwc->ep0_trb_addr);
 	params.param1 = lower_32_bits(dwc->ep0_trb_addr);
+
+	trace_dwc3_prepare_trb(dep, trb);
 
 	ret = dwc3_send_gadget_ep_cmd(dwc, dep->number,
 			DWC3_DEPCMD_STARTTRANSFER, &params);
@@ -248,6 +245,13 @@ int dwc3_gadget_ep0_queue(struct usb_ep *ep, struct usb_request *request,
 		goto out;
 	}
 
+	if (dwc->pullups_connected == false) {
+		dev_warn(dwc->dev,
+			 "DWC gadget is disconnected and ignore ep0 queue.\n");
+		ret = -ESHUTDOWN;
+		goto out;
+	}
+
 	dwc3_trace(trace_dwc3_ep0,
 			"queueing request %p to %s length %d state '%s'",
 			request, dep->name, request->length,
@@ -314,10 +318,12 @@ void dwc3_ep0_out_start(struct dwc3 *dwc)
 {
 	int				ret;
 
-	dwc3_ep0_prepare_one_trb(dwc, 0, dwc->ctrl_req_addr, 8,
+	ret = dwc3_ep0_start_trans(dwc, 0, dwc->ctrl_req_addr, 8,
 			DWC3_TRBCTL_CONTROL_SETUP, false);
-	ret = dwc3_ep0_start_trans(dwc, 0);
-	WARN_ON(ret < 0);
+	if (ret < 0)
+		dev_warn(dwc->dev, "Enter control setup failed ret = %d", ret);
+
+	complete(&dwc->ep0_in_setup);
 }
 
 static struct dwc3_ep *dwc3_wIndex_to_dep(struct dwc3 *dwc, __le16 wIndex_le)
@@ -759,6 +765,12 @@ static void dwc3_ep0_inspect_setup(struct dwc3 *dwc,
 	if (!dwc->gadget_driver)
 		goto out;
 
+	if (dwc->pullups_connected == false) {
+		dev_warn(dwc->dev,
+			 "DWC gadget is disconnected and ignore setup.\n");
+		goto out;
+	}
+
 	trace_dwc3_ctrl_req(ctrl);
 
 	len = le16_to_cpu(ctrl->wLength);
@@ -847,7 +859,7 @@ static void dwc3_ep0_complete_data(struct dwc3 *dwc,
 			trb++;
 			length = trb->size & DWC3_TRB_SIZE_MASK;
 
-			ep0->free_slot = 0;
+			ep0->trb_enqueue = 0;
 		}
 
 		transfer_size = roundup((ur->length - transfer_size),
@@ -875,9 +887,9 @@ static void dwc3_ep0_complete_data(struct dwc3 *dwc,
 
 			dwc->ep0_next_event = DWC3_EP0_COMPLETE;
 
-			dwc3_ep0_prepare_one_trb(dwc, epnum, dwc->ctrl_req_addr,
-					0, DWC3_TRBCTL_CONTROL_DATA, false);
-			ret = dwc3_ep0_start_trans(dwc, epnum);
+			ret = dwc3_ep0_start_trans(dwc, epnum,
+					dwc->ctrl_req_addr, 0,
+					DWC3_TRBCTL_CONTROL_DATA, false);
 			WARN_ON(ret < 0);
 		}
 	}
@@ -959,10 +971,9 @@ static void __dwc3_ep0_do_control_data(struct dwc3 *dwc,
 	req->direction = !!dep->number;
 
 	if (req->request.length == 0) {
-		dwc3_ep0_prepare_one_trb(dwc, dep->number,
+		ret = dwc3_ep0_start_trans(dwc, dep->number,
 				dwc->ctrl_req_addr, 0,
 				DWC3_TRBCTL_CONTROL_DATA, false);
-		ret = dwc3_ep0_start_trans(dwc, dep->number);
 	} else if (!IS_ALIGNED(req->request.length, dep->endpoint.maxpacket)
 			&& (dep->number == 0)) {
 		u32	transfer_size = 0;
@@ -980,7 +991,7 @@ static void __dwc3_ep0_do_control_data(struct dwc3 *dwc,
 		if (req->request.length > DWC3_EP0_BOUNCE_SIZE) {
 			transfer_size = ALIGN(req->request.length - maxpacket,
 					      maxpacket);
-			dwc3_ep0_prepare_one_trb(dwc, dep->number,
+			ret = dwc3_ep0_start_trans(dwc, dep->number,
 						   req->request.dma,
 						   transfer_size,
 						   DWC3_TRBCTL_CONTROL_DATA,
@@ -992,10 +1003,9 @@ static void __dwc3_ep0_do_control_data(struct dwc3 *dwc,
 
 		dwc->ep0_bounced = true;
 
-		dwc3_ep0_prepare_one_trb(dwc, dep->number,
+		ret = dwc3_ep0_start_trans(dwc, dep->number,
 				dwc->ep0_bounce_addr, transfer_size,
 				DWC3_TRBCTL_CONTROL_DATA, false);
-		ret = dwc3_ep0_start_trans(dwc, dep->number);
 	} else {
 		ret = usb_gadget_map_request(&dwc->gadget, &req->request,
 				dep->number);
@@ -1004,10 +1014,9 @@ static void __dwc3_ep0_do_control_data(struct dwc3 *dwc,
 			return;
 		}
 
-		dwc3_ep0_prepare_one_trb(dwc, dep->number, req->request.dma,
+		ret = dwc3_ep0_start_trans(dwc, dep->number, req->request.dma,
 				req->request.length, DWC3_TRBCTL_CONTROL_DATA,
 				false);
-		ret = dwc3_ep0_start_trans(dwc, dep->number);
 	}
 
 	WARN_ON(ret < 0);
@@ -1021,9 +1030,8 @@ static int dwc3_ep0_start_control_status(struct dwc3_ep *dep)
 	type = dwc->three_stage_setup ? DWC3_TRBCTL_CONTROL_STATUS3
 		: DWC3_TRBCTL_CONTROL_STATUS2;
 
-	dwc3_ep0_prepare_one_trb(dwc, dep->number,
+	return dwc3_ep0_start_trans(dwc, dep->number,
 			dwc->ctrl_req_addr, 0, type, false);
-	return dwc3_ep0_start_trans(dwc, dep->number);
 }
 
 static void __dwc3_ep0_do_control_status(struct dwc3 *dwc, struct dwc3_ep *dep)
@@ -1102,8 +1110,19 @@ static void dwc3_ep0_xfernotready(struct dwc3 *dwc,
 		dwc->ep0state = EP0_STATUS_PHASE;
 
 		if (dwc->delayed_status) {
+			struct dwc3_ep *dep = dwc->eps[0];
+
 			WARN_ON_ONCE(event->endpoint_number != 1);
-			dwc3_trace(trace_dwc3_ep0, "Delayed Status");
+			if (!list_empty(&dep->request_list)) {
+				dwc->delayed_status = false;
+				usb_gadget_set_state(&dwc->gadget,
+						     USB_STATE_CONFIGURED);
+				dwc3_ep0_do_control_status(dwc, event);
+				dwc3_trace(trace_dwc3_ep0,
+					   "Handled delayed Status");
+			} else {
+				dwc3_trace(trace_dwc3_ep0, "Delayed Status");
+			}
 			return;
 		}
 

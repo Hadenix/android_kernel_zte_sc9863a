@@ -12,6 +12,7 @@
  * published by the Free Software Foundation.
  *
  */
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/param.h>
 #include <linux/err.h>
@@ -65,6 +66,8 @@ enum {
 	FAN53555_CHIP_ID_03,
 	FAN53555_CHIP_ID_04,
 	FAN53555_CHIP_ID_05,
+	FAN53555_CHIP_ID_12 = 12,
+	FAN53555_CHIP_ID_13,
 };
 
 enum {
@@ -93,6 +96,8 @@ struct fan53555_device_info {
 	unsigned int sleep_vol_cache;
 };
 
+static struct dentry *regu_debugfs;
+
 static int fan53555_set_suspend_voltage(struct regulator_dev *rdev, int uV)
 {
 	struct fan53555_device_info *di = rdev_get_drvdata(rdev);
@@ -108,7 +113,8 @@ static int fan53555_set_suspend_voltage(struct regulator_dev *rdev, int uV)
 	if (ret < 0)
 		return ret;
 	/* Cache the sleep voltage setting.
-	 * Might not be the real voltage which is rounded */
+	 * Might not be the real voltage which is rounded
+	 */
 	di->sleep_vol_cache = uV;
 
 	return 0;
@@ -206,6 +212,8 @@ static int fan53555_voltages_setup_fairchild(struct fan53555_device_info *di)
 		di->vsel_step = 10000;
 		break;
 	case FAN53555_CHIP_ID_04:
+	case FAN53555_CHIP_ID_12:
+	case FAN53555_CHIP_ID_13:
 		di->vsel_min = 603000;
 		di->vsel_step = 12826;
 		break;
@@ -239,7 +247,7 @@ static int fan53555_voltages_setup_silergy(struct fan53555_device_info *di)
  * VOUT = 0.60V + NSELx * 10mV, from 0.60 to 1.23V.
  * For 04 option:
  * VOUT = 0.603V + NSELx * 12.826mV, from 0.603 to 1.411V.
- * */
+ */
 static int fan53555_device_setup(struct fan53555_device_info *di,
 				struct fan53555_platform_data *pdata)
 {
@@ -275,6 +283,50 @@ static int fan53555_device_setup(struct fan53555_device_info *di,
 	return ret;
 }
 
+static int debugfs_voltage_get(void *data, u64 *val)
+{
+	int sel, ret;
+	struct regulator_dev *rdev = data;
+
+	sel = rdev->desc->ops->get_voltage_sel(rdev);
+	if (sel < 0)
+		return sel;
+	ret = rdev->desc->ops->list_voltage(rdev, sel);
+
+	*val = ret / 1000;
+
+	return 0;
+}
+
+static int debugfs_voltage_set(void *data, u64 val)
+{
+	int selector;
+	struct regulator_dev *rdev = data;
+
+	val = val * 1000;
+	selector = rdev->desc->ops->map_voltage(rdev,
+					      val - rdev->desc->uV_step/2,
+					      val + rdev->desc->uV_step/2);
+
+	return rdev->desc->ops->set_voltage_sel(rdev, selector);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(fops_ldo,
+			debugfs_voltage_get, debugfs_voltage_set, "%llu\n");
+
+static void fan53555_debugfs_init(struct regulator_dev *rdev)
+{
+	regu_debugfs = debugfs_create_dir(rdev->desc->name, NULL);
+	if (IS_ERR_OR_NULL(regu_debugfs)) {
+		pr_warn("Failed to create (%s) debugfs directory\n",
+			rdev->desc->name);
+		return;
+	}
+
+	debugfs_create_file("voltage", S_IRUGO | S_IWUSR,
+			    regu_debugfs, rdev, &fops_ldo);
+}
+
 static int fan53555_regulator_register(struct fan53555_device_info *di,
 			struct regulator_config *config)
 {
@@ -294,6 +346,7 @@ static int fan53555_regulator_register(struct fan53555_device_info *di,
 	rdesc->owner = THIS_MODULE;
 
 	di->rdev = devm_regulator_register(di->dev, &di->desc, config);
+	fan53555_debugfs_init(di->rdev);
 	return PTR_ERR_OR_ZERO(di->rdev);
 }
 
@@ -429,6 +482,12 @@ static int fan53555_regulator_probe(struct i2c_client *client,
 
 }
 
+static int fan53555_regulator_remove(struct i2c_client *client)
+{
+	debugfs_remove_recursive(regu_debugfs);
+	return 0;
+}
+
 static const struct i2c_device_id fan53555_id[] = {
 	{
 		.name = "fan53555",
@@ -450,6 +509,7 @@ static struct i2c_driver fan53555_regulator_driver = {
 		.of_match_table = of_match_ptr(fan53555_dt_ids),
 	},
 	.probe = fan53555_regulator_probe,
+	.remove = fan53555_regulator_remove,
 	.id_table = fan53555_id,
 };
 

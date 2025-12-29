@@ -170,7 +170,7 @@ struct musb_io;
  * @post_root_reset_end: called after the root usb port reset flag gets cleared
  */
 struct musb_platform_ops {
-
+#define MUSB_DMA_SPRD		BIT(7)
 #define MUSB_DMA_UX500		BIT(6)
 #define MUSB_DMA_CPPI41		BIT(5)
 #define MUSB_DMA_CPPI		BIT(4)
@@ -214,7 +214,7 @@ struct musb_platform_ops {
 				dma_addr_t *dma_addr, u32 *len);
 	void	(*pre_root_reset_end)(struct musb *musb);
 	void	(*post_root_reset_end)(struct musb *musb);
-	void	(*clear_ep_rxintr)(struct musb *musb, int epnum);
+	void	(*phy_set_emphasis)(struct musb *musb, bool enabled);
 };
 
 /*
@@ -277,8 +277,10 @@ struct musb_csr_regs {
 	/* FIFO registers */
 	u16 txmaxp, txcsr, rxmaxp, rxcsr;
 	u16 rxfifoadd, txfifoadd;
+	u16 s_rxfifoadd, s_txfifoadd;
 	u8 txtype, txinterval, rxtype, rxinterval;
 	u8 rxfifosz, txfifosz;
+	u8 s_rxfifosz, s_txfifosz;
 	u8 txfunaddr, txhubaddr, txhubport;
 	u8 rxfunaddr, rxhubaddr, rxhubport;
 };
@@ -443,6 +445,8 @@ struct musb {
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*debugfs_root;
 #endif
+	bool	shutdowning;
+	atomic_t plugout_flag;
 };
 
 /* This must be included after struct musb is defined */
@@ -536,6 +540,12 @@ extern irqreturn_t musb_interrupt(struct musb *);
 
 extern void musb_hnp_stop(struct musb *musb);
 
+extern void musb_reset_all_fifo_2_default(struct musb *musb);
+
+extern void musb_reset_fifo_2_default(struct musb *musb, u8 epnum, u8 is_tx);
+
+extern void musb_force_single_fifo(struct musb *musb, u8 epnum, u8 is_tx);
+
 static inline void musb_platform_set_vbus(struct musb *musb, int is_on)
 {
 	if (musb->ops->set_vbus)
@@ -613,10 +623,9 @@ static inline void musb_platform_post_root_reset_end(struct musb *musb)
 		musb->ops->post_root_reset_end(musb);
 }
 
-static inline void musb_platform_clear_ep_rxintr(struct musb *musb, int epnum)
+static inline void musb_platform_emphasis_set(struct musb *musb, bool enabled)
 {
-	if (musb->ops->clear_ep_rxintr)
-		musb->ops->clear_ep_rxintr(musb, epnum);
+	if (musb->ops->phy_set_emphasis)
+		musb->ops->phy_set_emphasis(musb, enabled);
 }
-
 #endif	/* __MUSB_CORE_H__ */

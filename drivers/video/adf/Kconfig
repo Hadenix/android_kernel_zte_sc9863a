@@ -12,3 +12,5 @@ menuconfig ADF_MEMBLOCK
 	depends on ADF
 	depends on HAVE_MEMBLOCK
 	bool "Helper for using memblocks as buffers in ADF drivers"
+
+source "drivers/video/adf/sprd/Kconfig"

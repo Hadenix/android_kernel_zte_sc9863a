@@ -100,6 +100,8 @@ source "drivers/staging/skein/Kconfig"
 
 source "drivers/staging/unisys/Kconfig"
 
+source "drivers/staging/sprd/Kconfig"
+
 source "drivers/staging/clocking-wizard/Kconfig"
 
 source "drivers/staging/fbtft/Kconfig"
@@ -110,4 +112,7 @@ source "drivers/staging/wilc1000/Kconfig"
 
 source "drivers/staging/most/Kconfig"
 
+source "drivers/staging/msg2138/Kconfig"
+
+source "drivers/staging/sprd_usb/Kconfig"
 endif # STAGING

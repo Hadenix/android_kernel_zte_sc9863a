@@ -119,4 +119,7 @@ obj-$(CONFIG_I2C_SIBYTE)	+= i2c-sibyte.o
 obj-$(CONFIG_I2C_XGENE_SLIMPRO) += i2c-xgene-slimpro.o
 obj-$(CONFIG_SCx200_ACB)	+= scx200_acb.o
 
+obj-$(CONFIG_I2C_SPRD)		+= i2c-sprd.o
+obj-$(CONFIG_I2C_SPRD_V2)	+= i2c-sprd-v2.o
+obj-$(CONFIG_I2C_SPRD_V3)	+= i2c-sprd-v3.o
 ccflags-$(CONFIG_I2C_DEBUG_BUS) := -DDEBUG

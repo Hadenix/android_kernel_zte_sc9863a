@@ -18,12 +18,15 @@ thermal_sys-$(CONFIG_THERMAL_GOV_POWER_ALLOCATOR)	+= power_allocator.o
 
 # cpufreq cooling
 thermal_sys-$(CONFIG_CPU_THERMAL)	+= cpu_cooling.o
+thermal_sys-$(CONFIG_SPRD_CPU_COOLING)	+= sprd_cpu_cooling.o
+thermal_sys-$(CONFIG_SPRD_CPU_COOLING_DEVICE) += sprd_cpu_device.o
 
 # clock cooling
 thermal_sys-$(CONFIG_CLOCK_THERMAL)	+= clock_cooling.o
 
 # devfreq cooling
 thermal_sys-$(CONFIG_DEVFREQ_THERMAL) += devfreq_cooling.o
+thermal_sys-$(CONFIG_SPRD_GPU_COOLING_DEVICE) += sprd_gpu_device.o
 
 # platform thermal drivers
 obj-$(CONFIG_QCOM_SPMI_TEMP_ALARM)	+= qcom-spmi-temp-alarm.o
@@ -42,6 +45,14 @@ obj-$(CONFIG_X86_PKG_TEMP_THERMAL)	+= x86_pkg_temp_thermal.o
 obj-$(CONFIG_INTEL_SOC_DTS_IOSF_CORE)	+= intel_soc_dts_iosf.o
 obj-$(CONFIG_INTEL_SOC_DTS_THERMAL)	+= intel_soc_dts_thermal.o
 obj-$(CONFIG_INTEL_QUARK_DTS_THERMAL)	+= intel_quark_dts_thermal.o
+obj-$(CONFIG_SPRD_THERMAL)		+= sprd_thm.o
+obj-$(CONFIG_BIA_THERMAL)		+= bia_thermal.o
+obj-$(CONFIG_SPRD_THERMAL_MULT)		+= sprd_ap_mult_thm.o
+obj-$(CONFIG_SPRD_ITHM)		+= sprd_ap_ithm.o
+obj-$(CONFIG_SPRD_THERMAL_DEDICATE)		+= sprd_ap_dedicate_thm.o
+obj-$(CONFIG_SPRD_PMIC_THERMAL)		+= sprd_pmic_thm.o
+obj-$(CONFIG_SPRD_BOARD_THERMAL)		+= sprd_board_thm.o
+obj-$(CONFIG_SPRD_VIRT_THERMAL)                += sprd_virt_thm.o
 obj-$(CONFIG_TI_SOC_THERMAL)	+= ti-soc-thermal/
 obj-$(CONFIG_INT340X_THERMAL)  += int340x_thermal/
 obj-$(CONFIG_INTEL_PCH_THERMAL)	+= intel_pch_thermal.o

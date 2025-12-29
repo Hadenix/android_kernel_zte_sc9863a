@@ -206,6 +206,7 @@ static ssize_t musb_test_mode_write(struct file *file,
 	if (copy_from_user(buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
 		return -EFAULT;
 
+	musb_platform_emphasis_set(musb, true);
 	if (strstarts(buf, "force host"))
 		test = MUSB_TEST_FORCE_HOST;
 
@@ -223,15 +224,18 @@ static ssize_t musb_test_mode_write(struct file *file,
 		musb_load_testpacket(musb);
 	}
 
-	if (strstarts(buf, "test K"))
+	if (strstarts(buf, "test K")) {
+		musb_platform_emphasis_set(musb, false);
 		test = MUSB_TEST_K;
-
-	if (strstarts(buf, "test J"))
+	}
+	if (strstarts(buf, "test J")) {
+		musb_platform_emphasis_set(musb, false);
 		test = MUSB_TEST_J;
-
-	if (strstarts(buf, "test SE0 NAK"))
+	}
+	if (strstarts(buf, "test SE0 NAK")) {
+		musb_platform_emphasis_set(musb, false);
 		test = MUSB_TEST_SE0_NAK;
-
+	}
 	musb_writeb(musb->mregs, MUSB_TESTMODE, test);
 
 	return count;

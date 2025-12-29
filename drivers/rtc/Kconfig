@@ -1636,4 +1636,18 @@ config RTC_DRV_GOLDFISH
 	  Goldfish is a code name for the virtual platform developed by Google
 	  for Android emulation.
 
+config RTC_DRV_SPRD
+	tristate "Spreadtrum RTC"
+	help
+	  RTC driver for SPREADTRUM Real Time Clock controller
+
+config RTC_START_YEAR
+	int "set rtc counter start year"
+	default "2012"
+	depends on RTC_DRV_SPRD
+	help
+	  This will set rtc default date.
+
+	  System time will start from this setting.
+
 endif # RTC_CLASS

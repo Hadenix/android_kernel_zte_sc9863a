@@ -486,6 +486,58 @@ int sdio_memcpy_fromio(struct sdio_func *func, void *dst,
 }
 EXPORT_SYMBOL_GPL(sdio_memcpy_fromio);
 
+int sdio_memcpy_fromio_no_incraddr(struct sdio_func *func, u8 *buf,
+	unsigned int addr, int size)
+{
+	unsigned remainder = size;
+	unsigned max_blocks;
+	int ret;
+	const int write = 0, incr_addr = 1;
+
+	/* Do the bulk of the transfer using block mode (if supported). */
+	if (func->card->cccr.multi_block && (size > sdio_max_byte_size(func))) {
+		/* Blocks per command is limited by host count, host transfer
+		 * size and the maximum for IO_RW_EXTENDED of 511 blocks. */
+		max_blocks = min(func->card->host->max_blk_count, 511u);
+
+		while (remainder >= func->cur_blksize) {
+			unsigned blocks;
+
+			blocks = remainder / func->cur_blksize;
+			if (blocks > max_blocks)
+				blocks = max_blocks;
+			size = blocks * func->cur_blksize;
+
+			ret = mmc_io_rw_extended(func->card, write,
+				func->num, addr, incr_addr, buf,
+				blocks, func->cur_blksize);
+
+			if (ret)
+				return ret;
+
+			remainder -= size;
+			buf += size;
+		}
+	}
+
+	/* Write the remainder using byte mode. */
+	while (remainder > 0) {
+		size = min(remainder, sdio_max_byte_size(func));
+
+		/* Indicate byte mode by setting "blocks" = 0 */
+		ret = mmc_io_rw_extended(func->card, write, func->num, addr,
+			 incr_addr, buf, 0, size);
+
+		if (ret)
+			return ret;
+
+		remainder -= size;
+		buf += size;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sdio_memcpy_fromio_no_incraddr);
+
 /**
  *	sdio_memcpy_toio - write a chunk of memory to a SDIO function
  *	@func: SDIO function to access
@@ -502,6 +554,58 @@ int sdio_memcpy_toio(struct sdio_func *func, unsigned int addr,
 	return sdio_io_rw_ext_helper(func, 1, addr, 1, src, count);
 }
 EXPORT_SYMBOL_GPL(sdio_memcpy_toio);
+
+int sdio_memcpy_toio_no_incraddr(struct sdio_func *func, unsigned int addr,
+	void *buf, int size)
+{
+	unsigned remainder = size;
+	unsigned max_blocks;
+	int ret;
+	const int write = 1, incr_addr = 1;
+
+	/* Do the bulk of the transfer using block mode (if supported). */
+	if (func->card->cccr.multi_block && (size > sdio_max_byte_size(func))) {
+		/* Blocks per command is limited by host count, host transfer
+		 * size and the maximum for IO_RW_EXTENDED of 511 blocks. */
+		max_blocks = min(func->card->host->max_blk_count, 511u);
+
+		while (remainder >= func->cur_blksize) {
+			unsigned blocks;
+
+			blocks = remainder / func->cur_blksize;
+			if (blocks > max_blocks)
+				blocks = max_blocks;
+			size = blocks * func->cur_blksize;
+
+			ret = mmc_io_rw_extended(func->card, write,
+				func->num, addr, incr_addr, buf,
+				blocks, func->cur_blksize);
+
+			if (ret)
+				return ret;
+
+			remainder -= size;
+			buf += size;
+		}
+	}
+
+	/* Write the remainder using byte mode. */
+	while (remainder > 0) {
+		size = min(remainder, sdio_max_byte_size(func));
+
+		/* Indicate byte mode by setting "blocks" = 0 */
+		ret = mmc_io_rw_extended(func->card, write, func->num, addr,
+			 incr_addr, buf, 0, size);
+
+		if (ret)
+			return ret;
+
+		remainder -= size;
+		buf += size;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sdio_memcpy_toio_no_incraddr);
 
 /**
  *	sdio_readsb - read from a FIFO on a SDIO function

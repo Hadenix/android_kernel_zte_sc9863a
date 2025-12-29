@@ -42,6 +42,20 @@ config HWSPINLOCK_SIRF
 	  It's safe to say n here if you're not interested in SIRF hardware
 	  spinlock or just want a bare minimum kernel.
 
+config HWSPINLOCK_SPRD
+	tristate "Spreadtrum Hardware Spinlock device"
+	depends on ARCH_SPRD
+	select HWSPINLOCK
+	help
+	  Say y here to support the Spreadtrum Hardware Spinlock device.
+
+config HWSPINLOCK_SPRD_WA
+	bool "Spreadtrum Hardware Spinlock WorkAround"
+	depends on HWSPINLOCK_SPRD
+	help
+	  Say y here to support the Spreadtrum Hardware Spinlock workaround for
+	  iwhale2.
+
 config HSEM_U8500
 	tristate "STE Hardware Semaphore functionality"
 	depends on ARCH_U8500

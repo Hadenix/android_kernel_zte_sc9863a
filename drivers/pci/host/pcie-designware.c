@@ -11,6 +11,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/kernel.h>
@@ -24,6 +25,17 @@
 #include <linux/types.h>
 
 #include "pcie-designware.h"
+
+/* Parameters for the waiting for iATU enabled routine */
+#define LINK_WAIT_MAX_IATU_RETRIES	5
+#define LINK_WAIT_IATU_MIN		9000
+#define LINK_WAIT_IATU_MAX		10000
+
+/* PCIe Port Logic registers */
+#define PLR_OFFSET			0x700
+#define PCIE_PHY_DEBUG_R1		(PLR_OFFSET + 0x2c)
+#define PCIE_PHY_DEBUG_R1_LINK_UP	(0x1 << 4)
+#define PCIE_PHY_DEBUG_R1_LINK_IN_TRAINING	(0x1 << 29)
 
 /* Synopsis specific PCIE configuration registers */
 #define PCIE_PORT_LINK_CONTROL		0x710
@@ -46,10 +58,13 @@
 #define PCIE_MSI_INTR0_ENABLE		0x828
 #define PCIE_MSI_INTR0_MASK		0x82C
 #define PCIE_MSI_INTR0_STATUS		0x830
+#define PCIE_MISC_CONTROL_1_OFF		0x8BC
+#define PCIE_DBI_RO_WR_EN		(0x1 << 0)
 
 #define PCIE_ATU_VIEWPORT		0x900
 #define PCIE_ATU_REGION_INBOUND		(0x1 << 31)
 #define PCIE_ATU_REGION_OUTBOUND	(0x0 << 31)
+#define PCIE_ATU_REGION_INDEX2		(0x2 << 0)
 #define PCIE_ATU_REGION_INDEX1		(0x1 << 0)
 #define PCIE_ATU_REGION_INDEX0		(0x0 << 0)
 #define PCIE_ATU_CR1			0x904
@@ -68,6 +83,26 @@
 #define PCIE_ATU_DEV(x)			(((x) & 0x1f) << 19)
 #define PCIE_ATU_FUNC(x)		(((x) & 0x7) << 16)
 #define PCIE_ATU_UPPER_TARGET		0x91C
+
+/*
+ * iATU Unroll-specific register definitions
+ * From 4.80 core version the address translation will be made by unroll
+ */
+#define PCIE_ATU_UNR_BASE		0x18000
+#define PCIE_ATU_UNR_REGION_CTRL1	0x00
+#define PCIE_ATU_UNR_REGION_CTRL2	0x04
+#define PCIE_ATU_UNR_LOWER_BASE		0x08
+#define PCIE_ATU_UNR_UPPER_BASE		0x0C
+#define PCIE_ATU_UNR_LIMIT		0x10
+#define PCIE_ATU_UNR_LOWER_TARGET	0x14
+#define PCIE_ATU_UNR_UPPER_TARGET	0x18
+
+/* Register address builder */
+#define PCIE_GET_ATU_OUTB_UNR_REG_OFFSET(region)	\
+			(PCIE_ATU_UNR_BASE | ((region) << 9))
+
+#define PCIE_GET_ATU_INB_UNR_REG_OFFSET(region)				\
+			(PCIE_ATU_UNR_BASE | ((region) << 9) | (0x1 << 8))
 
 static struct pci_ops dw_pcie_ops;
 
@@ -151,9 +186,68 @@ static int dw_pcie_wr_own_conf(struct pcie_port *pp, int where, int size,
 	return ret;
 }
 
+static u32 dw_pcie_readl_ob_unroll(struct pcie_port *pp, u32 index, u32 reg)
+{
+	u32 val;
+	u32 offset = PCIE_GET_ATU_OUTB_UNR_REG_OFFSET(index);
+
+	dw_pcie_readl_rc(pp, offset + reg, &val);
+	return val;
+}
+
+static void dw_pcie_writel_ob_unroll(struct pcie_port *pp, u32 index, u32 reg,
+				     u32 val)
+{
+	u32 offset = PCIE_GET_ATU_OUTB_UNR_REG_OFFSET(index);
+
+	dw_pcie_writel_rc(pp, val, offset + reg);
+}
+
+void dw_pcie_prog_outbound_atu_unroll(struct pcie_port *pp, int index, int type,
+				      u64 cpu_addr, u64 pci_addr, u32 size)
+{
+	u32 retries, val;
+
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_LOWER_BASE,
+				 lower_32_bits(cpu_addr));
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_UPPER_BASE,
+				 upper_32_bits(cpu_addr));
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_LIMIT,
+				 lower_32_bits(cpu_addr + size - 1));
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_LOWER_TARGET,
+				 lower_32_bits(pci_addr));
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_UPPER_TARGET,
+				 upper_32_bits(pci_addr));
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_REGION_CTRL1,
+				 type);
+	dw_pcie_writel_ob_unroll(pp, index, PCIE_ATU_UNR_REGION_CTRL2,
+				 PCIE_ATU_ENABLE);
+
+	/*
+	 * Make sure ATU enable takes effect before any subsequent config
+	 * and I/O accesses.
+	 */
+	for (retries = 0; retries < LINK_WAIT_MAX_IATU_RETRIES; retries++) {
+		val = dw_pcie_readl_ob_unroll(pp, index,
+					      PCIE_ATU_UNR_REGION_CTRL2);
+		if (val & PCIE_ATU_ENABLE)
+			return;
+
+		usleep_range(LINK_WAIT_IATU_MIN, LINK_WAIT_IATU_MAX);
+	}
+	dev_err(pp->dev, "outbound iATU is not being enabled\n");
+}
+
 static void dw_pcie_prog_outbound_atu(struct pcie_port *pp, int index,
 		int type, u64 cpu_addr, u64 pci_addr, u32 size)
 {
+
+	if (pp->iatu_unroll_enabled) {
+		dw_pcie_prog_outbound_atu_unroll(pp, index, type, cpu_addr,
+						 pci_addr, size);
+		return;
+	}
+
 	dw_pcie_writel_rc(pp, PCIE_ATU_REGION_OUTBOUND | index,
 			  PCIE_ATU_VIEWPORT);
 	dw_pcie_writel_rc(pp, lower_32_bits(cpu_addr), PCIE_ATU_LOWER_BASE);
@@ -164,6 +258,28 @@ static void dw_pcie_prog_outbound_atu(struct pcie_port *pp, int index,
 	dw_pcie_writel_rc(pp, upper_32_bits(pci_addr), PCIE_ATU_UPPER_TARGET);
 	dw_pcie_writel_rc(pp, type, PCIE_ATU_CR1);
 	dw_pcie_writel_rc(pp, PCIE_ATU_ENABLE, PCIE_ATU_CR2);
+}
+
+void dw_pcie_dbi_ro_wr_en(struct pcie_port *pp)
+{
+	u32 reg;
+	u32 val;
+
+	reg = PCIE_MISC_CONTROL_1_OFF;
+	dw_pcie_readl_rc(pp, reg, &val);
+	val |= PCIE_DBI_RO_WR_EN;
+	dw_pcie_writel_rc(pp, val, reg);
+}
+
+void dw_pcie_dbi_ro_wr_dis(struct pcie_port *pp)
+{
+	u32 reg;
+	u32 val;
+
+	reg = PCIE_MISC_CONTROL_1_OFF;
+	dw_pcie_readl_rc(pp, reg, &val);
+	val &= ~PCIE_DBI_RO_WR_EN;
+	dw_pcie_writel_rc(pp, val, reg);
 }
 
 static struct irq_chip dw_msi_irq_chip = {
@@ -382,10 +498,14 @@ static struct msi_controller dw_pcie_msi_chip = {
 
 int dw_pcie_link_up(struct pcie_port *pp)
 {
+	u32 val;
+
 	if (pp->ops->link_up)
 		return pp->ops->link_up(pp);
-	else
-		return 0;
+
+	val = readl(pp->dbi_base + PCIE_PHY_DEBUG_R1);
+	return ((val & PCIE_PHY_DEBUG_R1_LINK_UP) &&
+		(!(val & PCIE_PHY_DEBUG_R1_LINK_IN_TRAINING)));
 }
 
 static int dw_pcie_msi_map(struct irq_domain *domain, unsigned int irq,
@@ -401,6 +521,18 @@ static const struct irq_domain_ops msi_domain_ops = {
 	.map = dw_pcie_msi_map,
 };
 
+
+static u8 dw_pcie_iatu_unroll_enabled(struct pcie_port *pp)
+{
+	u32 val;
+
+	dw_pcie_readl_rc(pp, PCIE_ATU_VIEWPORT, &val);
+	if (val == 0xffffffff)
+		return 1;
+
+	return 0;
+}
+
 int dw_pcie_host_init(struct pcie_port *pp)
 {
 	struct device_node *np = pp->dev->of_node;
@@ -413,6 +545,7 @@ int dw_pcie_host_init(struct pcie_port *pp)
 	struct resource_entry *win;
 
 	cfg_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "config");
+
 	if (cfg_res) {
 		pp->cfg0_size = resource_size(cfg_res)/2;
 		pp->cfg1_size = resource_size(cfg_res)/2;
@@ -517,15 +650,25 @@ int dw_pcie_host_init(struct pcie_port *pp)
 	if (pp->ops->host_init)
 		pp->ops->host_init(pp);
 
-	if (!pp->ops->rd_other_conf)
-		dw_pcie_prog_outbound_atu(pp, PCIE_ATU_REGION_INDEX1,
+	if (!pp->ops->rd_other_conf) {
+		pp->iatu_unroll_enabled = dw_pcie_iatu_unroll_enabled(pp);
+		dev_dbg(pp->dev, "iATU unroll: %s\n",
+			pp->iatu_unroll_enabled ? "enabled" : "disabled");
+
+
+		dw_pcie_prog_outbound_atu(pp, PCIE_ATU_REGION_INDEX2,
 					  PCIE_ATU_TYPE_MEM, pp->mem_base,
 					  pp->mem_bus_addr, pp->mem_size);
-
+		dw_pcie_prog_outbound_atu(pp, PCIE_ATU_REGION_INDEX1,
+					  PCIE_ATU_TYPE_IO, pp->io_base,
+					  pp->io_bus_addr, pp->io_size);
+	}
 	dw_pcie_wr_own_conf(pp, PCI_BASE_ADDRESS_0, 4, 0);
 
 	/* program correct class for RC */
+	dw_pcie_dbi_ro_wr_en(pp);
 	dw_pcie_wr_own_conf(pp, PCI_CLASS_DEVICE, 2, PCI_CLASS_BRIDGE_PCI);
+	dw_pcie_dbi_ro_wr_dis(pp);
 
 	dw_pcie_rd_own_conf(pp, PCIE_LINK_WIDTH_SPEED_CONTROL, 4, &val);
 	val |= PORT_LOGIC_SPEED_CHANGE;
@@ -590,10 +733,6 @@ static int dw_pcie_rd_other_conf(struct pcie_port *pp, struct pci_bus *bus,
 				  type, cpu_addr,
 				  busdev, cfg_size);
 	ret = dw_pcie_cfg_read(va_cfg_base + where, size, val);
-	dw_pcie_prog_outbound_atu(pp, PCIE_ATU_REGION_INDEX0,
-				  PCIE_ATU_TYPE_IO, pp->io_base,
-				  pp->io_bus_addr, pp->io_size);
-
 	return ret;
 }
 
@@ -624,10 +763,6 @@ static int dw_pcie_wr_other_conf(struct pcie_port *pp, struct pci_bus *bus,
 				  type, cpu_addr,
 				  busdev, cfg_size);
 	ret = dw_pcie_cfg_write(va_cfg_base + where, size, val);
-	dw_pcie_prog_outbound_atu(pp, PCIE_ATU_REGION_INDEX0,
-				  PCIE_ATU_TYPE_IO, pp->io_base,
-				  pp->io_bus_addr, pp->io_size);
-
 	return ret;
 }
 
@@ -753,14 +888,18 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 	dw_pcie_writel_rc(pp, val, PCIE_LINK_WIDTH_SPEED_CONTROL);
 
 	/* setup RC BARs */
+	dw_pcie_dbi_ro_wr_en(pp);
 	dw_pcie_writel_rc(pp, 0x00000004, PCI_BASE_ADDRESS_0);
 	dw_pcie_writel_rc(pp, 0x00000000, PCI_BASE_ADDRESS_1);
+	dw_pcie_dbi_ro_wr_dis(pp);
 
 	/* setup interrupt pins */
+	dw_pcie_dbi_ro_wr_en(pp);
 	dw_pcie_readl_rc(pp, PCI_INTERRUPT_LINE, &val);
 	val &= 0xffff00ff;
 	val |= 0x00000100;
 	dw_pcie_writel_rc(pp, val, PCI_INTERRUPT_LINE);
+	dw_pcie_dbi_ro_wr_dis(pp);
 
 	/* setup bus numbers */
 	dw_pcie_readl_rc(pp, PCI_PRIMARY_BUS, &val);

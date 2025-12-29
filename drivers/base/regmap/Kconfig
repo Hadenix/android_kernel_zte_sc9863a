@@ -9,6 +9,12 @@ config REGMAP
 	select IRQ_DOMAIN if REGMAP_IRQ
 	bool
 
+config REGMAP_SPRD_DEBUG
+	bool "open sprd glb_reg set/clr check"
+	depends on REGMAP
+	help
+	  Open this to check whether glb reg support set/clr.
+
 config REGMAP_AC97
 	tristate
 

@@ -1278,6 +1278,33 @@ static const struct file_operations mtd_proc_ops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
+
+static int mtd_proc_bdblk_show(struct seq_file *m, void *v)
+{
+	struct mtd_info *mtd;
+
+	seq_puts(m, "dev:name          badblocks\n");
+	mutex_lock(&mtd_table_mutex);
+	mtd_for_each_device(mtd) {
+		seq_printf(m, "mtd%d:%-12s     %x\n",
+			   mtd->index, mtd->name,
+			   mtd->ecc_stats.badblocks);
+	}
+	mutex_unlock(&mtd_table_mutex);
+	return 0;
+}
+
+static int mtd_proc_bdblk_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mtd_proc_bdblk_show, NULL);
+}
+
+static const struct file_operations mtd_proc_bdblk_ops = {
+	.open		= mtd_proc_bdblk_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif /* CONFIG_PROC_FS */
 
 /*====================================================================*/
@@ -1298,6 +1325,7 @@ static int __init mtd_bdi_init(struct backing_dev_info *bdi, const char *name)
 }
 
 static struct proc_dir_entry *proc_mtd;
+static struct proc_dir_entry *proc_mtdbdblk;
 
 static int __init init_mtd(void)
 {
@@ -1312,6 +1340,7 @@ static int __init init_mtd(void)
 		goto err_bdi;
 
 	proc_mtd = proc_create("mtd", 0, NULL, &mtd_proc_ops);
+	proc_mtdbdblk = proc_create("mtdbdblk", 0, NULL, &mtd_proc_bdblk_ops);
 
 	ret = init_mtdchar();
 	if (ret)
@@ -1322,6 +1351,8 @@ static int __init init_mtd(void)
 out_procfs:
 	if (proc_mtd)
 		remove_proc_entry("mtd", NULL);
+	if (proc_mtdbdblk)
+		remove_proc_entry("mtdbdblk", NULL);
 err_bdi:
 	class_unregister(&mtd_class);
 err_reg:
@@ -1334,6 +1365,8 @@ static void __exit cleanup_mtd(void)
 	cleanup_mtdchar();
 	if (proc_mtd)
 		remove_proc_entry("mtd", NULL);
+	if (proc_mtdbdblk)
+		remove_proc_entry("mtdbdblk", NULL);
 	class_unregister(&mtd_class);
 	bdi_destroy(&mtd_bdi);
 	idr_destroy(&mtd_idr);

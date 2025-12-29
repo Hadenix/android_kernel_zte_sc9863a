@@ -26,22 +26,21 @@
 #include <linux/stat.h>
 #include <linux/clk.h>
 #include <linux/cpu.h>
+#include <linux/cpu_pm.h>
 #include <linux/coresight.h>
 #include <linux/pm_wakeup.h>
 #include <linux/amba/bus.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <linux/pm_runtime.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <asm/sections.h>
 
 #include "coresight-etm4x.h"
 
 static int boot_enable;
 module_param_named(boot_enable, boot_enable, int, S_IRUGO);
-
-/* The number of ETMv4 currently registered */
-static int etm4_count;
-static struct etmv4_drvdata *etmdrvdata[NR_CPUS];
 
 static void etm4_os_unlock(void *info)
 {
@@ -57,6 +56,8 @@ static bool etm4_arch_supported(u8 arch)
 	switch (arch) {
 	case ETM_ARCH_V4:
 		break;
+	case ETM_ARCH_V4_2:
+		break;
 	default:
 		return false;
 	}
@@ -66,24 +67,8 @@ static bool etm4_arch_supported(u8 arch)
 static int etm4_trace_id(struct coresight_device *csdev)
 {
 	struct etmv4_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
-	unsigned long flags;
-	int trace_id = -1;
 
-	if (!drvdata->enable)
-		return drvdata->trcid;
-
-	pm_runtime_get_sync(drvdata->dev);
-	spin_lock_irqsave(&drvdata->spinlock, flags);
-
-	CS_UNLOCK(drvdata->base);
-	trace_id = readl_relaxed(drvdata->base + TRCTRACEIDR);
-	trace_id &= ETM_TRACEID_MASK;
-	CS_LOCK(drvdata->base);
-
-	spin_unlock_irqrestore(&drvdata->spinlock, flags);
-	pm_runtime_put(drvdata->dev);
-
-	return trace_id;
+	return drvdata->trcid;
 }
 
 static void etm4_enable_hw(void *info)
@@ -177,15 +162,26 @@ static void etm4_enable_hw(void *info)
 			"timeout observed when probing at offset %#x\n",
 			TRCSTATR);
 
-	CS_LOCK(drvdata->base);
+	/* enable timestamp clock count */
+	if ((drvdata->cfg & ETMv4_MODE_TIMESTAMP) &&
+		(drvdata->ts_base != NULL))
+		writel_relaxed(1, drvdata->ts_base);
 
-	dev_dbg(drvdata->dev, "cpu: %d enable smp call done\n", drvdata->cpu);
+	CS_LOCK(drvdata->base);
 }
 
 static int etm4_enable(struct coresight_device *csdev)
 {
 	struct etmv4_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 	int ret;
+
+	/* prepare cs clock to max one, higher clock will reduce trace lost */
+	if (!IS_ERR(drvdata->clk_cs) && !IS_ERR(drvdata->clk_cs_src)) {
+		clk_set_parent(drvdata->clk_cs, drvdata->clk_cs_src);
+		clk_prepare_enable(drvdata->clk_cs);
+		dev_info(drvdata->dev, "coresight set src clock as %ld\n",
+			clk_get_rate(drvdata->clk_cs));
+	}
 
 	pm_runtime_get_sync(drvdata->dev);
 	spin_lock(&drvdata->spinlock);
@@ -228,9 +224,17 @@ static void etm4_disable_hw(void *info)
 	isb();
 	writel_relaxed(control, drvdata->base + TRCPRGCTLR);
 
-	CS_LOCK(drvdata->base);
+	/* wait for TRCSTATR.IDLE to go up */
+	if (coresight_timeout(drvdata->base, TRCSTATR, TRCSTATR_IDLE_BIT, 1))
+		dev_err(drvdata->dev,
+			"timeout observed when probing at offset %#x\n",
+			TRCSTATR);
 
-	dev_dbg(drvdata->dev, "cpu: %d disable smp call done\n", drvdata->cpu);
+	/* disable timestamp clock count */
+	if ((drvdata->cfg & ETMv4_MODE_TIMESTAMP) && (drvdata->ts_base != NULL))
+		writel_relaxed(0, drvdata->ts_base);
+
+	CS_LOCK(drvdata->base);
 }
 
 static void etm4_disable(struct coresight_device *csdev)
@@ -257,6 +261,10 @@ static void etm4_disable(struct coresight_device *csdev)
 	put_online_cpus();
 
 	pm_runtime_put(drvdata->dev);
+
+	/* unprepare cs clock */
+	if (!IS_ERR(drvdata->clk_cs) && !IS_ERR(drvdata->clk_cs_src))
+		clk_disable_unprepare(drvdata->clk_cs);
 
 	dev_info(drvdata->dev, "ETM tracing disabled\n");
 }
@@ -2216,10 +2224,13 @@ static ssize_t name##_show(struct device *_dev,				\
 			   struct device_attribute *attr, char *buf)	\
 {									\
 	struct etmv4_drvdata *drvdata = dev_get_drvdata(_dev->parent);	\
-	return scnprintf(buf, PAGE_SIZE, "0x%x\n",			\
-			 readl_relaxed(drvdata->base + offset));	\
+	int value = 0;							\
+									\
+	if (drvdata->enable)						\
+		value = readl_relaxed(drvdata->base + offset);		\
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", value);		\
 }									\
-DEVICE_ATTR_RO(name)
+static DEVICE_ATTR_RO(name)
 
 coresight_simple_func(trcoslsr, TRCOSLSR);
 coresight_simple_func(trcpdcr, TRCPDCR);
@@ -2546,44 +2557,70 @@ static void etm4_init_default_data(struct etmv4_drvdata *drvdata)
 	 * A trace ID value of 0 is invalid, so let's start at some
 	 * random value that fits in 7 bits.  ETMv3.x has 0x10 so let's
 	 * start at 0x20.
+	 * It could set 0x1, because the trace32 tool can only decode
+	 * the ETB data when set as 0x1.
 	 */
-	drvdata->trcid = 0x20 + drvdata->cpu;
+	drvdata->trcid = 0x1 + drvdata->cpu;
 }
 
 static int etm4_cpu_callback(struct notifier_block *nfb, unsigned long action,
 			    void *hcpu)
 {
+	struct etmv4_drvdata *pdata =
+			container_of(nfb, struct etmv4_drvdata, nb);
 	unsigned int cpu = (unsigned long)hcpu;
 
-	if (!etmdrvdata[cpu])
+	if ((!pdata) || (!pdata->enable) || (pdata->cpu != cpu))
 		goto out;
 
 	switch (action & (~CPU_TASKS_FROZEN)) {
 	case CPU_STARTING:
-		spin_lock(&etmdrvdata[cpu]->spinlock);
-		if (!etmdrvdata[cpu]->os_unlock) {
-			etm4_os_unlock(etmdrvdata[cpu]);
-			etmdrvdata[cpu]->os_unlock = true;
+		spin_lock(&pdata->spinlock);
+		if (!pdata->os_unlock) {
+			etm4_os_unlock(pdata);
+			pdata->os_unlock = true;
 		}
 
-		if (etmdrvdata[cpu]->enable)
-			etm4_enable_hw(etmdrvdata[cpu]);
-		spin_unlock(&etmdrvdata[cpu]->spinlock);
+		etm4_enable_hw(pdata);
+		spin_unlock(&pdata->spinlock);
 		break;
 
 	case CPU_ONLINE:
-		if (etmdrvdata[cpu]->boot_enable &&
-			!etmdrvdata[cpu]->sticky_enable)
-			coresight_enable(etmdrvdata[cpu]->csdev);
+		if (pdata->boot_enable && !pdata->sticky_enable)
+			coresight_enable(pdata->csdev);
 		break;
 
 	case CPU_DYING:
-		spin_lock(&etmdrvdata[cpu]->spinlock);
-		if (etmdrvdata[cpu]->enable)
-			etm4_disable_hw(etmdrvdata[cpu]);
-		spin_unlock(&etmdrvdata[cpu]->spinlock);
+		spin_lock(&pdata->spinlock);
+		etm4_disable_hw(pdata);
+		spin_unlock(&pdata->spinlock);
 		break;
 	}
+out:
+	return NOTIFY_OK;
+}
+
+static int etm4_cpu_pm_notify(struct notifier_block *self,
+				    unsigned long action, void *hcpu)
+{
+	struct etmv4_drvdata *pdata =
+			container_of(self, struct etmv4_drvdata, pm_nb);
+	int this_cpu = 0;
+
+	this_cpu = raw_smp_processor_id();
+	if ((!pdata) || (!pdata->enable) || (pdata->cpu != this_cpu))
+		goto out;
+
+	switch (action) {
+	case CPU_PM_ENTER:
+		etm4_disable_hw(pdata);
+		break;
+	case CPU_PM_ENTER_FAILED:
+	case CPU_PM_EXIT:
+		etm4_enable_hw(pdata);
+		break;
+	}
+
 out:
 	return NOTIFY_OK;
 }
@@ -2592,16 +2629,22 @@ static struct notifier_block etm4_cpu_notifier = {
 	.notifier_call = etm4_cpu_callback,
 };
 
+static struct notifier_block etm4_cpu_pm_notifier = {
+	.notifier_call = etm4_cpu_pm_notify,
+};
+
 static int etm4_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	int ret;
-	void __iomem *base;
+	void __iomem *base, *base_ts = NULL;
 	struct device *dev = &adev->dev;
 	struct coresight_platform_data *pdata = NULL;
 	struct etmv4_drvdata *drvdata;
 	struct resource *res = &adev->res;
 	struct coresight_desc *desc;
 	struct device_node *np = adev->dev.of_node;
+	struct device_node *np_ts = NULL;
+	struct resource res_ts;
 
 	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
 	if (!desc)
@@ -2626,14 +2669,37 @@ static int etm4_probe(struct amba_device *adev, const struct amba_id *id)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	/* get coresight timestamp base address */
+	np_ts = of_find_compatible_node(NULL, NULL, "arm,coresight-ts");
+	if (np_ts) {
+		of_address_to_resource(np_ts, 0, &res_ts);
+		base_ts = ioremap_nocache(res_ts.start, resource_size(&res_ts));
+		if (IS_ERR_OR_NULL(base_ts)) {
+			base_ts = NULL;
+			dev_warn(dev, "Timestamp remap failed!\n");
+		}
+	} else {
+		dev_warn(dev, "Can't get TS device node!\n");
+		base_ts = NULL;
+	}
+
 	drvdata->base = base;
+	drvdata->ts_base = base_ts;
+
+	/* get coresight and timestamp clock source */
+	drvdata->clk_cs = of_clk_get_by_name(np, "clk_cs");
+	if (IS_ERR(drvdata->clk_cs))
+		dev_warn(dev, "etm can't get the coresight clock!\n");
+
+	drvdata->clk_cs_src = of_clk_get_by_name(np, "cs_src");
+	if (IS_ERR(drvdata->clk_cs_src))
+		dev_warn(dev, "etm can't get the coresight src clock!\n");
 
 	spin_lock_init(&drvdata->spinlock);
 
 	drvdata->cpu = pdata ? pdata->cpu : 0;
 
 	get_online_cpus();
-	etmdrvdata[drvdata->cpu] = drvdata;
 
 	if (!smp_call_function_single(drvdata->cpu, etm4_os_unlock, drvdata, 1))
 		drvdata->os_unlock = true;
@@ -2642,8 +2708,10 @@ static int etm4_probe(struct amba_device *adev, const struct amba_id *id)
 				etm4_init_arch_data,  drvdata, 1))
 		dev_err(dev, "ETM arch init failed\n");
 
-	if (!etm4_count++)
-		register_hotcpu_notifier(&etm4_cpu_notifier);
+	drvdata->nb = etm4_cpu_notifier;
+	drvdata->pm_nb = etm4_cpu_pm_notifier;
+	register_hotcpu_notifier(&drvdata->nb);
+	cpu_pm_register_notifier(&drvdata->pm_nb);
 
 	put_online_cpus();
 
@@ -2679,8 +2747,8 @@ static int etm4_probe(struct amba_device *adev, const struct amba_id *id)
 err_arch_supported:
 	pm_runtime_put(&adev->dev);
 err_coresight_register:
-	if (--etm4_count == 0)
-		unregister_hotcpu_notifier(&etm4_cpu_notifier);
+	unregister_hotcpu_notifier(&drvdata->nb);
+	cpu_pm_unregister_notifier(&drvdata->pm_nb);
 	return ret;
 }
 
@@ -2689,8 +2757,8 @@ static int etm4_remove(struct amba_device *adev)
 	struct etmv4_drvdata *drvdata = amba_get_drvdata(adev);
 
 	coresight_unregister(drvdata->csdev);
-	if (--etm4_count == 0)
-		unregister_hotcpu_notifier(&etm4_cpu_notifier);
+	unregister_hotcpu_notifier(&drvdata->nb);
+	cpu_pm_unregister_notifier(&drvdata->pm_nb);
 
 	return 0;
 }
@@ -2705,6 +2773,16 @@ static struct amba_id etm4_ids[] = {
 		.id	= 0x000bb95e,
 		.mask	= 0x000fffff,
 		.data	= "ETM 4.0",
+	},
+	{	/* ETM 4.0 - Javelin board */
+		.id = 0x0008a020,
+		.mask	= 0x000fffff,
+		.data	= "ETM 4.0",
+	},
+	{
+		.id = 0x000bbd05,
+		.mask	= 0x000fffff,
+		.data	= "ETM 4.2",
 	},
 	{ 0, 0},
 };

@@ -24,23 +24,30 @@
 #include <linux/swap.h>
 #include "ion_priv.h"
 
-static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool)
+static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool,
+				       unsigned long buffer_flag)
 {
-	struct page *page = alloc_pages(pool->gfp_mask, pool->order);
+	struct page *page = NULL;
+
+	if (buffer_flag & ION_FLAG_NOCLEAR)
+		page = alloc_pages(pool->gfp_mask & (~__GFP_ZERO), pool->order);
+	else
+		page = alloc_pages(pool->gfp_mask, pool->order);
 
 	if (!page)
 		return NULL;
-	ion_page_pool_alloc_set_cache_policy(pool, page);
 
-	ion_pages_sync_for_device(NULL, page, PAGE_SIZE << pool->order,
-						DMA_BIDIRECTIONAL);
+	ion_pages_sync_for_device(pool->dev, page, PAGE_SIZE << pool->order,
+				  DMA_BIDIRECTIONAL);
 	return page;
 }
 
 static void ion_page_pool_free_pages(struct ion_page_pool *pool,
 				     struct page *page)
 {
-	ion_page_pool_free_set_cache_policy(pool, page);
+	if  (!(pool->is_cache & ION_FLAG_CACHED))
+		ion_page_pool_free_set_cache_policy(pool, page);
+
 	__free_pages(page, pool->order);
 }
 
@@ -76,7 +83,9 @@ static struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
 	return page;
 }
 
-struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
+struct page *ion_page_pool_alloc(struct ion_page_pool *pool,
+				 unsigned long buffer_flag,
+				 bool *from_pool)
 {
 	struct page *page = NULL;
 
@@ -89,8 +98,12 @@ struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
 		page = ion_page_pool_remove(pool, false);
 	mutex_unlock(&pool->mutex);
 
-	if (!page)
-		page = ion_page_pool_alloc_pages(pool);
+	if (!page) {
+		page = ion_page_pool_alloc_pages(pool, buffer_flag);
+		*from_pool = false;
+	} else {
+		*from_pool = true;
+	}
 
 	return page;
 }
@@ -155,12 +168,14 @@ int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 	return freed;
 }
 
-struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order)
+struct ion_page_pool *ion_page_pool_create(struct device *dev, gfp_t gfp_mask,
+					   unsigned int order)
 {
 	struct ion_page_pool *pool = kmalloc(sizeof(struct ion_page_pool),
 					     GFP_KERNEL);
 	if (!pool)
 		return NULL;
+	pool->dev = dev;
 	pool->high_count = 0;
 	pool->low_count = 0;
 	INIT_LIST_HEAD(&pool->low_items);

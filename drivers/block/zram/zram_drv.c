@@ -514,7 +514,7 @@ static struct zram_meta *zram_meta_alloc(char *pool_name, u64 disksize)
 		goto out_error;
 	}
 
-	meta->mem_pool = zs_create_pool(pool_name, GFP_NOIO | __GFP_HIGHMEM);
+	meta->mem_pool = zs_create_pool(pool_name);
 	if (!meta->mem_pool) {
 		pr_err("Error creating memory pool\n");
 		goto out_error;
@@ -717,7 +717,8 @@ static int zram_bvec_write(struct zram *zram, struct bio_vec *bvec, u32 index,
 			src = uncmem;
 	}
 
-	handle = zs_malloc(meta->mem_pool, clen);
+	handle = zs_malloc(meta->mem_pool, clen, GFP_NOIO | __GFP_HIGHMEM |
+		__GFP_MOVABLE);
 	if (!handle) {
 		pr_err("Error allocating memory for compressed page: %u, size=%zu\n",
 			index, clen);
@@ -1184,6 +1185,60 @@ static struct attribute_group zram_disk_attr_group = {
 	.attrs = zram_disk_attrs,
 };
 
+#ifdef CONFIG_E_SHOW_MEM
+static int zram_e_show_mem_cb(int id, void *ptr, void *data)
+{
+	struct zram *zram = (struct zram *)ptr;
+	unsigned long *total_used = data;
+
+	down_read(&zram->init_lock);
+	if (init_done(zram)) {
+		struct zram_meta *meta = zram->meta;
+		*total_used += zs_get_total_pages(meta->mem_pool);
+	}
+	up_read(&zram->init_lock);
+
+	printk("Detail:\n");
+#ifdef CONFIG_64BIT
+	printk("        orig: %lu pages,  %lu kB\n",
+		atomic64_read(&zram->stats.pages_stored),
+		(atomic64_read(&zram->stats.pages_stored) << PAGE_SHIFT) / 1024);
+	printk("        compressed: %lu kB\n",
+		atomic64_read(&zram->stats.compr_data_size) / 1024);
+#else
+	printk("        orig: %llu pages,  %llu kB\n",
+		atomic64_read(&zram->stats.pages_stored),
+		(atomic64_read(&zram->stats.pages_stored) << PAGE_SHIFT) / 1024);
+	printk("        compressed: %llu kB\n",
+		atomic64_read(&zram->stats.compr_data_size) / 1024);
+#endif
+
+	return 0;
+}
+
+static int zram_e_show_mem_handler(struct notifier_block *nb,
+				unsigned long val, void *data)
+{
+	unsigned long *used = data;
+	unsigned long total_used = 0;
+
+	printk("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+	printk("Enhanced Mem-info :ZRAM\n");
+
+	idr_for_each(&zram_index_idr, &zram_e_show_mem_cb, (void *)&total_used);
+	*used += total_used;
+
+	printk("Total used:%lu pages, %lu kB\n",
+		total_used, (total_used << PAGE_SHIFT) / 1024);
+
+	return 0;
+}
+
+static struct notifier_block zram_e_show_mem_notifier = {
+	.notifier_call = zram_e_show_mem_handler,
+};
+#endif
+
 /*
  * Allocate and initialize new zram device. the function returns
  * '>= 0' device_id upon success, and negative value otherwise.
@@ -1438,6 +1493,9 @@ static int __init zram_init(void)
 		num_devices--;
 	}
 
+#ifdef CONFIG_E_SHOW_MEM
+	register_e_show_mem_notifier(&zram_e_show_mem_notifier);
+#endif
 	return 0;
 
 out_error:
@@ -1448,6 +1506,10 @@ out_error:
 static void __exit zram_exit(void)
 {
 	destroy_devices();
+
+#ifdef CONFIG_E_SHOW_MEM
+	unregister_e_show_mem_notifier(&zram_e_show_mem_notifier);
+#endif
 }
 
 module_init(zram_init);

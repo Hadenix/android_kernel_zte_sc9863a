@@ -64,7 +64,33 @@ config DEVFREQ_GOV_USERSPACE
 	  Otherwise, the governor does not change the frequnecy
 	  given at the initialization.
 
+config DEVFREQ_SPRD_DFS
+	tristate "Sprd dfs"
+	depends on SPRD_SIPC
+	help
+	  Sets the frequency at the user specidied or scenarios.
+	  This governor returns the user configured frequency if there
+	  has been an input to sysfs node.Otherwise, the governor does
+	  not change the frequnecy given at the initialization.
+
+config DEVFREQ_GOV_SPRD_SCENE
+	tristate "Sprd scene set from userspace"
+	depends on DEVFREQ_SPRD_AUTO_DFS
+	help
+	  Sprd govanor can selected by Sprd_auto_dfs driver.
+	  Userspace set scene to this govanor and then govnor send freq
+	  request to driver.
+
 comment "DEVFREQ Drivers"
+
+config DEVFREQ_SPRD_AUTO_DFS
+	tristate "Sprd auto_dfs driver for dmc v3 and ddrc v1"
+	depends on SPRD_SIPC
+	help
+	  Sets the frequency at the user specidied or scenarios.
+	  This driver used on sprd ddrcv1 and after versions, can select
+	  governors.
+	  This driver send SIPC request to DFS core to change freq.
 
 config ARM_EXYNOS4_BUS_DEVFREQ
 	bool "ARM Exynos4210/4212/4412 Memory Bus DEVFREQ Driver"

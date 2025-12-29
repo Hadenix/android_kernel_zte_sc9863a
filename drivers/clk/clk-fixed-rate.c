@@ -10,6 +10,7 @@
  */
 
 #include <linux/clk-provider.h>
+#include <linux/clkdev.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/io.h>
@@ -127,8 +128,10 @@ void of_fixed_clk_setup(struct device_node *node)
 	clk = clk_register_fixed_rate_with_accuracy(NULL, clk_name, NULL,
 						    CLK_IS_ROOT, rate,
 						    accuracy);
-	if (!IS_ERR(clk))
+	if (!IS_ERR(clk)) {
+		clk_register_clkdev(clk, clk_name, 0);
 		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	}
 }
 EXPORT_SYMBOL_GPL(of_fixed_clk_setup);
 CLK_OF_DECLARE(fixed_clk, "fixed-clock", of_fixed_clk_setup);

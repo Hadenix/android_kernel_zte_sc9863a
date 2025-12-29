@@ -95,6 +95,10 @@ static u32 estimate_sustainable_power(struct thermal_zone_device *tz)
 	u32 sustainable_power = 0;
 	struct thermal_instance *instance;
 	struct power_allocator_params *params = tz->governor_data;
+	int ret = 0;
+	int control_temp = 0;
+	unsigned int res_ja = 0;
+	unsigned int res_ja_sum = 0;
 
 	list_for_each_entry(instance, &tz->thermal_instances, tz_node) {
 		struct thermal_cooling_device *cdev = instance->cdev;
@@ -106,9 +110,31 @@ static u32 estimate_sustainable_power(struct thermal_zone_device *tz)
 		if (power_actor_get_min_power(cdev, tz, &min_power))
 			continue;
 
+		if (instance->cdev->ops->get_resistance_ja) {
+			instance->cdev->ops->
+				get_resistance_ja(instance->cdev, &res_ja);
+			res_ja_sum += res_ja;
+		}
+
 		sustainable_power += min_power;
 	}
 
+	if (res_ja_sum) {
+		ret = tz->ops->get_trip_temp(tz,
+			params->trip_max_desired_temperature, &control_temp);
+		if (ret) {
+			dev_warn(&tz->device,
+				 "Failed to get the maximum desired temperature: %d\n",
+				 ret);
+			return sustainable_power;
+		}
+		sustainable_power = (control_temp - 25000) / res_ja_sum;
+		dev_dbg(&tz->device, "tz:%s control_temp:%u res_ja_sum:%u\n",
+			tz->type, control_temp, res_ja_sum);
+	}
+
+	dev_dbg(&tz->device, "tz:%s sustainable_power:%u\n",
+		tz->type, sustainable_power);
 	return sustainable_power;
 }
 
@@ -164,7 +190,7 @@ static void estimate_pid_constants(struct thermal_zone_device *tz,
 			temperature_threshold;
 
 	if (!tz->tzp->k_i || force)
-		tz->tzp->k_i = int_to_frac(10) / 1000;
+		tz->tzp->k_i = int_to_frac(2) / 1000;
 	/*
 	 * The default for k_d and integral_cutoff is 0, so we can
 	 * leave them as they are.
@@ -214,6 +240,8 @@ static u32 pid_controller(struct thermal_zone_device *tz,
 
 	/* Calculate the proportional term */
 	p = mul_frac(err < 0 ? tz->tzp->k_po : tz->tzp->k_pu, err);
+	if ((err >= int_to_frac(2000)) && (params->err_integral < 0))
+		params->err_integral = 0;
 
 	/*
 	 * Calculate the integral term
@@ -290,6 +318,7 @@ static void divvy_up_power(u32 *req_power, u32 *max_power, int num_actors,
 			   u32 *granted_power, u32 *extra_actor_power)
 {
 	u32 extra_power, capped_extra_power;
+	u32 max_granted_power, min_extra, need;
 	int i;
 
 	/*
@@ -313,6 +342,27 @@ static void divvy_up_power(u32 *req_power, u32 *max_power, int num_actors,
 
 		extra_actor_power[i] = max_power[i] - granted_power[i];
 		capped_extra_power += extra_actor_power[i];
+	}
+
+	if (num_actors > 1) {
+		int actor = 1;
+
+		max_granted_power = granted_power[actor];
+		for (i = 1; i < num_actors; i++) {
+			if (granted_power[i] >= max_granted_power) {
+				max_granted_power = granted_power[i];
+				actor = i;
+			}
+		}
+
+		if (req_power[0] > granted_power[0]) {
+			need = req_power[0] - granted_power[0];
+			min_extra = min(need, granted_power[actor]);
+			if (min_extra) {
+				granted_power[actor] -= min_extra;
+				granted_power[0] += min_extra;
+			}
+		}
 	}
 
 	if (!extra_power)
@@ -532,6 +582,23 @@ static void allow_maximum_power(struct thermal_zone_device *tz)
 		instance->target = 0;
 		instance->cdev->updated = false;
 		thermal_cdev_update(instance->cdev);
+		if (instance->cdev->ops->online_everything)
+			instance->cdev->ops->online_everything(instance->cdev);
+	}
+	mutex_unlock(&tz->lock);
+}
+
+static void update_tz_temp(struct thermal_zone_device *tz)
+{
+	struct thermal_instance *instance;
+
+	mutex_lock(&tz->lock);
+	list_for_each_entry(instance, &tz->thermal_instances, tz_node) {
+		if (!cdev_is_power_actor(instance->cdev))
+			continue;
+
+		if (instance->cdev->ops->get_max_freq)
+			instance->cdev->ops->get_max_freq(instance->cdev, tz);
 	}
 	mutex_unlock(&tz->lock);
 }
@@ -580,6 +647,9 @@ static int power_allocator_bind(struct thermal_zone_device *tz)
 					       control_temp, false);
 	}
 
+	tz->tzp->thm_enable = 1;
+	tz->tzp->reset_done = 0;
+
 	reset_pid_controller(params);
 
 	tz->governor_data = params;
@@ -619,6 +689,18 @@ static int power_allocator_throttle(struct thermal_zone_device *tz, int trip)
 	 */
 	if (trip != params->trip_max_desired_temperature)
 		return 0;
+
+	update_tz_temp(tz);
+	if (!tz->tzp->thm_enable) {
+		if (!tz->tzp->reset_done) {
+			tz->passive = 0;
+			reset_pid_controller(params);
+			allow_maximum_power(tz);
+			tz->tzp->reset_done = 1;
+		}
+		return 0;
+	} else
+		tz->tzp->reset_done = 0;
 
 	ret = tz->ops->get_trip_temp(tz, params->trip_switch_on,
 				     &switch_on_temp);

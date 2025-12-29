@@ -46,6 +46,7 @@ static struct device_attribute dual_role_attrs[] = {
 	DUAL_ROLE_ATTR(power_role),
 	DUAL_ROLE_ATTR(data_role),
 	DUAL_ROLE_ATTR(powers_vconn),
+	DUAL_ROLE_ATTR(accessory_mode),
 };
 
 struct class *dual_role_class;
@@ -72,12 +73,12 @@ static char *kstrdupcase(const char *str, gfp_t gfp, bool to_upper)
 
 static void dual_role_changed_work(struct work_struct *work)
 {
+	char *connected[2] = { "DEVTYPE=typec_", NULL };
 	struct dual_role_phy_instance *dual_role =
 	    container_of(work, struct dual_role_phy_instance,
 			 changed_work);
 
-	dev_dbg(&dual_role->dev, "%s\n", __func__);
-	kobject_uevent(&dual_role->dev.kobj, KOBJ_CHANGE);
+	kobject_uevent_env(&dual_role->dev.kobj, KOBJ_CHANGE, connected);
 }
 
 void dual_role_instance_changed(struct dual_role_phy_instance *dual_role)
@@ -267,6 +268,11 @@ static char *vconn_supply_text[] = {
 	"n", "y"
 };
 
+/* accessory mode */
+static char *accessory_mode_text[] = {
+	"n", "y"
+};
+
 static ssize_t dual_role_show_property(struct device *dev,
 				       struct device_attribute *attr, char *buf)
 {
@@ -329,6 +335,14 @@ static ssize_t dual_role_show_property(struct device *dev,
 		if (value < DUAL_ROLE_PROP_VCONN_SUPPLY_TOTAL)
 			return snprintf(buf, PAGE_SIZE, "%s\n",
 					vconn_supply_text[value]);
+		else
+			return -EIO;
+	} else if (off == DUAL_ROLE_PROP_ACC_MODE) {
+		BUILD_BUG_ON(DUAL_ROLE_PROP_ACC_MODE_TOTAL !=
+				ARRAY_SIZE(accessory_mode_text));
+		if (value < DUAL_ROLE_PROP_ACC_MODE_TOTAL)
+			return snprintf(buf, PAGE_SIZE, "%s\n",
+					accessory_mode_text[value]);
 		else
 			return -EIO;
 	} else

@@ -74,3 +74,17 @@ config ARM_MVEBU_V7_CPUIDLE
 	depends on ARCH_MVEBU && !ARM64
 	help
 	  Select this to enable cpuidle on Armada 370, 38x and XP processors.
+
+config ARM_SPRD_CPUIDLE
+	bool "CPU Idle Driver for Spreadtrum processors"
+	depends on ARCH_SPRD
+	select ARM_CPU_SUSPEND
+	select DT_IDLE_STATES
+
+config ARM_SPRD_DUMMY_CPUIDLE
+	bool "Dummy CPU Idle Driver for Spreadtrum processors"
+	depends on ARCH_SPRD
+	select ARM_CPU_SUSPEND
+	select DT_IDLE_STATES
+	help
+	  Select this to enable dummy cpuidle on SPRD soc on virtual platform.

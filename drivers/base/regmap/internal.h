@@ -58,7 +58,10 @@ struct regmap {
 	};
 	regmap_lock lock;
 	regmap_unlock unlock;
+	regmap_lock hw_lock;
+	regmap_unlock hw_unlock;
 	void *lock_arg; /* This is passed to lock/unlock functions */
+	void *hw_lock_arg; /* This is passed to lock/unlock functions */
 	gfp_t alloc_flags;
 
 	struct device *dev; /* Device we do I/O on */

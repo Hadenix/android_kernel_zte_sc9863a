@@ -31,6 +31,15 @@ config ANDROID_BINDER_DEVICES
 	  created. Each binder device has its own context manager, and is
 	  therefore logically separated from the other devices.
 
+config ANDROID_BINDER_BUFFER_DEBUG
+	bool "Android Binder buffer debug"
+	depends on ANDROID_BINDER_IPC
+	default n
+	---help---
+	  Binder buffer debug function is used to dump binder buffer to
+	  diagnose some abnormal suituation. E.g. process' binder buffer
+	  is exhausted and new transaction fails.
+
 config ANDROID_BINDER_IPC_SELFTEST
 	bool "Android Binder IPC Driver Selftest"
 	depends on ANDROID_BINDER_IPC

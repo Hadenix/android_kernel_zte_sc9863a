@@ -9,6 +9,7 @@
  */
 #include <linux/module.h>
 #include <linux/clk-provider.h>
+#include <linux/clkdev.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/of.h>
@@ -130,8 +131,10 @@ void __init of_fixed_factor_clk_setup(struct device_node *node)
 
 	clk = clk_register_fixed_factor(NULL, clk_name, parent_name, 0,
 					mult, div);
-	if (!IS_ERR(clk))
+	if (!IS_ERR(clk)) {
+		clk_register_clkdev(clk, clk_name, 0);
 		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	}
 }
 EXPORT_SYMBOL_GPL(of_fixed_factor_clk_setup);
 CLK_OF_DECLARE(fixed_factor_clk, "fixed-factor-clock",

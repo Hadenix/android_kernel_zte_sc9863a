@@ -23,6 +23,8 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/spinlock.h>
+#include <linux/cpu.h>
+#include <linux/cpu_pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
 #include <linux/coresight.h>
@@ -112,6 +114,7 @@ enum tmc_mem_intf_width {
  * @size:	@buf size.
  * @enable:	this TMC is being used.
  * @config_type: TMC variant, must be of type @tmc_config_type.
+ * @tmc_mode: TMC mode, must be of type @tmc_mode.
  * @trigger_cntr: amount of words to store after a trigger.
  */
 struct tmc_drvdata {
@@ -128,7 +131,10 @@ struct tmc_drvdata {
 	u32			size;
 	bool			enable;
 	enum tmc_config_type	config_type;
+	enum tmc_mode		tmc_mode;
 	u32			trigger_cntr;
+	struct notifier_block	nb;
+	char etf_name[16];
 };
 
 static void tmc_wait_for_ready(struct tmc_drvdata *drvdata)
@@ -180,11 +186,6 @@ static void tmc_etb_enable_hw(struct tmc_drvdata *drvdata)
 	CS_UNLOCK(drvdata->base);
 
 	writel_relaxed(TMC_MODE_CIRCULAR_BUFFER, drvdata->base + TMC_MODE);
-	writel_relaxed(TMC_FFCR_EN_FMT | TMC_FFCR_EN_TI |
-		       TMC_FFCR_FON_FLIN | TMC_FFCR_FON_TRIG_EVT |
-		       TMC_FFCR_TRIGON_TRIGIN,
-		       drvdata->base + TMC_FFCR);
-
 	writel_relaxed(drvdata->trigger_cntr, drvdata->base + TMC_TRG);
 	tmc_enable_hw(drvdata);
 
@@ -262,6 +263,7 @@ static int tmc_enable(struct tmc_drvdata *drvdata, enum tmc_mode mode)
 			tmc_etf_enable_hw(drvdata);
 	}
 	drvdata->enable = true;
+	drvdata->tmc_mode = mode;
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
 	dev_info(drvdata->dev, "TMC enabled\n");
@@ -424,6 +426,30 @@ static const struct coresight_ops tmc_etf_cs_ops = {
 	.link_ops	= &tmc_link_ops,
 };
 
+static bool tmc_check_ctrl_enable(struct tmc_drvdata *drvdata)
+{
+	if (readl_relaxed(drvdata->base + TMC_CTL) & TMC_CTL_CAPT_EN)
+		return true;
+	return false;
+}
+
+static void tmc_dump_data_for_cp(struct tmc_drvdata *drvdata)
+{
+	/* Zero out the memory to help with debug */
+	memset(drvdata->buf, 0, drvdata->size);
+
+	CS_UNLOCK(drvdata->base);
+	tmc_flush_and_stop(drvdata);
+	tmc_etb_dump_hw(drvdata);
+	tmc_disable_hw(drvdata);
+	writel_relaxed(TMC_FFCR_EN_FMT | TMC_FFCR_EN_TI |
+			   TMC_FFCR_FON_FLIN | TMC_FFCR_FON_TRIG_EVT |
+			   TMC_FFCR_TRIGON_TRIGIN,
+			   drvdata->base + TMC_FFCR);
+	tmc_enable_hw(drvdata);
+	CS_LOCK(drvdata->base);
+}
+
 static int tmc_read_prepare(struct tmc_drvdata *drvdata)
 {
 	int ret;
@@ -431,8 +457,16 @@ static int tmc_read_prepare(struct tmc_drvdata *drvdata)
 	enum tmc_mode mode;
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
-	if (!drvdata->enable)
+	/*
+	 * ETB in AON power domain, all the sys could use it,
+	 * but when CP block, user space want to get ETB data by /dev/tmc-etb.
+	 * At that time, ETB is enabled by CP sys, but enable flag is false.
+	 */
+	if (!drvdata->enable) {
+		if (tmc_check_ctrl_enable(drvdata))
+			tmc_dump_data_for_cp(drvdata);
 		goto out;
+	}
 
 	if (drvdata->config_type == TMC_CONFIG_TYPE_ETB) {
 		tmc_etb_disable_hw(drvdata);
@@ -464,8 +498,9 @@ static void tmc_read_unprepare(struct tmc_drvdata *drvdata)
 	enum tmc_mode mode;
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
-	if (!drvdata->enable)
-		goto out;
+
+	 if (!drvdata->enable)
+		 goto out;
 
 	if (drvdata->config_type == TMC_CONFIG_TYPE_ETB) {
 		tmc_etb_enable_hw(drvdata);
@@ -509,6 +544,8 @@ static ssize_t tmc_read(struct file *file, char __user *data, size_t len,
 						   struct tmc_drvdata, miscdev);
 	char *bufp = drvdata->buf + *ppos;
 
+	if ((!drvdata->enable) && (!tmc_check_ctrl_enable(drvdata)))
+		return 0;
 	if (*ppos + len > drvdata->size)
 		len = drvdata->size - *ppos;
 
@@ -559,6 +596,47 @@ static const struct file_operations tmc_fops = {
 	.release	= tmc_release,
 	.llseek		= no_llseek,
 };
+
+static int tmc_find_source(struct coresight_device *csdev, int cpu)
+{
+	struct coresight_device *parent_csdev;
+	struct coresight_connection *conns;
+	int i, ret;
+
+	for (i = csdev->nr_outport; i < csdev->nr_outport +
+		csdev->nr_inport; i++) {
+		conns = &csdev->conns[i];
+		if (conns->parent_dev != NULL) {
+			parent_csdev = conns->parent_dev;
+			/* Check the parent device */
+			if (parent_csdev->type == CORESIGHT_DEV_TYPE_SOURCE) {
+				/* It is the source device. */
+				if ((parent_csdev->enable == true) &&
+					(parent_csdev->cpu == cpu)) {
+					/* It is source dev, and is enabled,
+					  * it needs to enable the pach.
+					  */
+					return 0;
+				}
+				/* Check next inport */
+				continue;
+			} else {
+				/* It is't source device,
+				 * needs to recursion check.
+				 */
+				ret = tmc_find_source(conns->parent_dev, cpu);
+				if (ret != -1)
+					/* Get the enable source. */
+					return ret;
+			}
+		} else {
+			/* It is first device, but not source device */
+			return -1;
+		}
+	}
+	/* Do not get enabled source device. */
+	return -1;
+}
 
 static ssize_t status_show(struct device *dev,
 			   struct device_attribute *attr, char *buf)
@@ -654,6 +732,45 @@ static struct attribute *coresight_etf_attrs[] = {
 	NULL,
 };
 ATTRIBUTE_GROUPS(coresight_etf);
+
+static int tmc_cpu_pm_notify(struct notifier_block *self,
+	unsigned long action, void *hcpu)
+{
+	int this_cpu, ret;
+	struct tmc_drvdata *pdata = container_of(self, struct tmc_drvdata, nb);
+
+	this_cpu = raw_smp_processor_id();
+
+	switch (action) {
+	case CPU_PM_ENTER:
+		break;
+	case CPU_PM_ENTER_FAILED:
+	case CPU_PM_EXIT:
+		if (pdata->enable == true) {
+			ret = tmc_find_source(pdata->csdev, this_cpu);
+			if (ret == 0) {
+				if (pdata->config_type == TMC_CONFIG_TYPE_ETB) {
+					tmc_etb_enable_hw(pdata);
+				} else if (pdata->config_type ==
+							TMC_CONFIG_TYPE_ETR) {
+					tmc_etr_enable_hw(pdata);
+				} else {
+					if (pdata->tmc_mode ==
+							TMC_MODE_CIRCULAR_BUFFER)
+						tmc_etb_enable_hw(pdata);
+					else
+						tmc_etf_enable_hw(pdata);
+				}
+			}
+		}
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block tmc_cpu_pm_notifier = {
+	.notifier_call = tmc_cpu_pm_notify,
+};
 
 static int tmc_probe(struct amba_device *adev, const struct amba_id *id)
 {
@@ -751,12 +868,22 @@ static int tmc_probe(struct amba_device *adev, const struct amba_id *id)
 		goto err_devm_kzalloc;
 	}
 
-	drvdata->miscdev.name = pdata->name;
+	/*fix etb dev name as "/dev/tmc_etb" for modem */
+	if (strnstr(pdata->name, "etb", strlen(pdata->name))) {
+		drvdata->miscdev.name = "tmc_etb";
+	} else {
+		snprintf(drvdata->etf_name, sizeof(drvdata->etf_name), "etf-%8lx",
+		(unsigned long)res->start);
+		drvdata->miscdev.name = drvdata->etf_name;
+	}
+
 	drvdata->miscdev.minor = MISC_DYNAMIC_MINOR;
 	drvdata->miscdev.fops = &tmc_fops;
+	drvdata->nb = tmc_cpu_pm_notifier;
 	ret = misc_register(&drvdata->miscdev);
 	if (ret)
 		goto err_misc_register;
+	cpu_pm_register_notifier(&drvdata->nb);
 
 	dev_info(dev, "TMC initialized\n");
 	return 0;
@@ -774,6 +901,7 @@ static int tmc_remove(struct amba_device *adev)
 {
 	struct tmc_drvdata *drvdata = amba_get_drvdata(adev);
 
+	cpu_pm_unregister_notifier(&drvdata->nb);
 	misc_deregister(&drvdata->miscdev);
 	coresight_unregister(drvdata->csdev);
 	if (drvdata->config_type == TMC_CONFIG_TYPE_ETR)

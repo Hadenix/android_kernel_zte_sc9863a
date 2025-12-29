@@ -5,6 +5,7 @@
 # Each configuration option enables a list of files.
 
 obj-y				+= core/
+obj-y				+= sprdfb/
 
 obj-$(CONFIG_EXYNOS_VIDEO)     += exynos/
 
@@ -80,6 +81,8 @@ obj-$(CONFIG_FB_PVR2)             += pvr2fb.o
 obj-$(CONFIG_FB_VOODOO1)          += sstfb.o
 obj-$(CONFIG_FB_ARMCLCD)	  += amba-clcd.o
 obj-$(CONFIG_PLAT_VERSATILE_CLCD) += amba-clcd-versatile.o
+obj-$(CONFIG_FB_ARMHDLCD)	  += arm-hdlcd.o
+obj-$(CONFIG_FB_SPRD_X86HDLCD)	  += sprdx86-hdlcd.o
 obj-$(CONFIG_FB_GOLDFISH)         += goldfishfb.o
 obj-$(CONFIG_FB_68328)            += 68328fb.o
 obj-$(CONFIG_FB_GBE)              += gbefb.o

@@ -110,6 +110,8 @@ int __hwspin_trylock(struct hwspinlock *hwlock, int mode, unsigned long *flags)
 		ret = spin_trylock_irqsave(&hwlock->lock, *flags);
 	else if (mode == HWLOCK_IRQ)
 		ret = spin_trylock_irq(&hwlock->lock);
+	else if (mode == HWLOCK_NO_SWLOCK)
+		ret = HWLOCK_NO_SWLOCK;
 	else
 		ret = spin_trylock(&hwlock->lock);
 
@@ -126,6 +128,8 @@ int __hwspin_trylock(struct hwspinlock *hwlock, int mode, unsigned long *flags)
 			spin_unlock_irqrestore(&hwlock->lock, *flags);
 		else if (mode == HWLOCK_IRQ)
 			spin_unlock_irq(&hwlock->lock);
+		else if (mode == HWLOCK_NO_SWLOCK)
+			ret = 0;
 		else
 			spin_unlock(&hwlock->lock);
 
@@ -248,13 +252,15 @@ void __hwspin_unlock(struct hwspinlock *hwlock, int mode, unsigned long *flags)
 
 	hwlock->bank->ops->unlock(hwlock);
 
-	/* Undo the spin_trylock{_irq, _irqsave} called while locking */
-	if (mode == HWLOCK_IRQSTATE)
-		spin_unlock_irqrestore(&hwlock->lock, *flags);
-	else if (mode == HWLOCK_IRQ)
-		spin_unlock_irq(&hwlock->lock);
-	else
-		spin_unlock(&hwlock->lock);
+	if (mode != HWLOCK_NO_SWLOCK) {
+		/* Undo the spin_trylock{_irq, _irqsave} called while locking */
+		if (mode == HWLOCK_IRQSTATE)
+			spin_unlock_irqrestore(&hwlock->lock, *flags);
+		else if (mode == HWLOCK_IRQ)
+			spin_unlock_irq(&hwlock->lock);
+		else
+			spin_unlock(&hwlock->lock);
+	}
 }
 EXPORT_SYMBOL_GPL(__hwspin_unlock);
 
@@ -622,6 +628,114 @@ out:
 	return hwlock;
 }
 EXPORT_SYMBOL_GPL(hwspin_lock_request_specific);
+
+struct hwspinlock *hwspin_lock_get_used(unsigned int id)
+{
+	struct hwspinlock *hwlock;
+	int ret;
+
+	mutex_lock(&hwspinlock_tree_lock);
+
+	/* make sure this hwspinlock exists */
+	hwlock = radix_tree_lookup(&hwspinlock_tree, id);
+	if (!hwlock) {
+		pr_warn("hwspinlock %u does not exist\n", id);
+		goto out;
+	}
+
+	/* sanity check (this shouldn't happen) */
+	WARN_ON(hwlock_to_id(hwlock) != id);
+
+	/* make sure this hwspinlock is unused */
+	ret = radix_tree_tag_get(&hwspinlock_tree, id, HWSPINLOCK_UNUSED);
+	if (ret) {
+		hwlock = NULL;
+		goto out;
+	}
+
+out:
+	mutex_unlock(&hwspinlock_tree_lock);
+	return hwlock;
+}
+EXPORT_SYMBOL_GPL(hwspin_lock_get_used);
+
+static int of_hwspin_lock_match(struct device_node *np, const char *name,
+				int index, struct of_phandle_args *hwlock_spec)
+{
+	const char *s;
+
+	if (of_property_read_string_index(np, "hwlock-names", index, &s))
+		return -ENODEV;
+
+	if (strcmp(name, s))
+		return -ENODEV;
+
+	if (of_parse_phandle_with_args(np, "hwlocks", "#hwlock-cells", index,
+				       hwlock_spec))
+		return -ENODEV;
+
+	return 0;
+}
+
+/**
+ * of_hwspin_lock_request() - request for a hwspinlock specified by DT
+ * @np: device node to find a hardware spinlock
+ * @name: hardware spinlock name to be matched
+ *
+ * This function should be called by users of the hwspinlock module,
+ * in order to assign them a specific hwspinlock specified from device
+ * tree.
+ *
+ * Should be called from a process context (might sleep)
+ *
+ * Returns the address of the assigned hwspinlock, or NULL on error
+ */
+struct hwspinlock *of_hwspin_lock_request(struct device_node *np,
+					  const char *name)
+{
+	struct hwspinlock *hwlock = NULL;
+	struct of_phandle_args hwlock_spec;
+	unsigned int base_id;
+	int count, i, ret;
+
+	if (!np || !name) {
+		pr_err("%s: lack of node or name.\n", __func__);
+		return NULL;
+	}
+
+	if (!of_find_property(np, "hwlocks", NULL)) {
+		pr_err("%s: lack of hwlocks property\n", __func__);
+		return NULL;
+	}
+
+	count = of_property_count_strings(np, "hwlock-names");
+	if (count < 0) {
+		pr_err("%s: hwlock-names property is missed or empty\n",
+		       __func__);
+		return NULL;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (of_hwspin_lock_match(np, name, i, &hwlock_spec))
+			continue;
+
+		ret = of_property_read_u32(hwlock_spec.np, "hwlocks-base",
+					   &base_id);
+		if (ret) {
+			pr_err("%s: get hardware spinlock base id failed!\n",
+			       __func__);
+			continue;
+		}
+
+		hwlock = hwspin_lock_request_specific(base_id +
+						      hwlock_spec.args[0]);
+		if (hwlock)
+			break;
+	}
+
+	return hwlock;
+}
+EXPORT_SYMBOL_GPL(of_hwspin_lock_request);
 
 /**
  * hwspin_lock_free() - free a specific hwspinlock

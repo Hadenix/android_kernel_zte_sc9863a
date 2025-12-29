@@ -1018,15 +1018,21 @@ void rndis_set_max_pkt_xfer(struct rndis_params *params, u8 max_pkt_per_xfer)
 void rndis_add_hdr(struct sk_buff *skb)
 {
 	struct rndis_packet_msg_type *header;
+	int pad_len;
 
 	if (!skb)
 		return;
-	header = (void *)skb_push(skb, sizeof(*header));
-	memset(header, 0, sizeof *header);
+	pad_len = skb->len % 4;
+	if (pad_len)
+		pad_len = 4 - pad_len;
+
+	header = (void *)skb_push(skb, sizeof(*header) + pad_len);
+	memset(header, 0, sizeof(*header) + pad_len);
+
 	header->MessageType = cpu_to_le32(RNDIS_MSG_PACKET);
 	header->MessageLength = cpu_to_le32(skb->len);
-	header->DataOffset = cpu_to_le32(36);
-	header->DataLength = cpu_to_le32(skb->len - sizeof(*header));
+	header->DataOffset = cpu_to_le32(36+pad_len);
+	header->DataLength = cpu_to_le32(skb->len - sizeof(*header) - pad_len);
 }
 EXPORT_SYMBOL_GPL(rndis_add_hdr);
 
@@ -1145,7 +1151,7 @@ int rndis_rm_hdr(struct gether *port,
 			return -ENOMEM;
 		}
 
-		skb_pull(skb, msg_len - sizeof *hdr);
+		skb_pull(skb, msg_len - (data_offset + 8));
 		skb_trim(skb2, data_len);
 		skb_queue_tail(list, skb2);
 

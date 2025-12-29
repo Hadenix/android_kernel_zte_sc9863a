@@ -74,8 +74,6 @@ void mmc_decode_cid(struct mmc_card *card)
 {
 	u32 *resp = card->raw_cid;
 
-	memset(&card->cid, 0, sizeof(struct mmc_cid));
-
 	/*
 	 * SD doesn't currently have a version field so we will
 	 * have to assume we can parse this.
@@ -195,6 +193,8 @@ static int mmc_decode_scr(struct mmc_card *card)
 
 	resp[3] = card->raw_scr[1];
 	resp[2] = card->raw_scr[0];
+
+	pr_err("debug: second raw_scr:  0x%x  %x\n", card->raw_scr[0], card->raw_scr[1]);
 
 	scr_struct = UNSTUFF_BITS(resp, 60, 4);
 	if (scr_struct != 0) {
@@ -344,6 +344,7 @@ int mmc_sd_switch_hs(struct mmc_card *card)
 {
 	int err;
 	u8 *status;
+	int retries;
 
 	if (card->scr.sda_vsn < SCR_SPEC_VER_1)
 		return 0;
@@ -364,7 +365,13 @@ int mmc_sd_switch_hs(struct mmc_card *card)
 		return -ENOMEM;
 	}
 
-	err = mmc_sd_switch(card, 1, 0, 1, status);
+	for (retries = 0; retries < 10; retries++) {
+		err = mmc_sd_switch(card, 1, 0, 1, status);
+		if (!err)
+			break;
+	}
+	pr_info("%s: Retry switching card into high-speed mode, retries = %d\n",
+		mmc_hostname(card->host), retries);
 	if (err)
 		goto out;
 
@@ -821,10 +828,20 @@ int mmc_sd_setup_card(struct mmc_host *host, struct mmc_card *card,
 		if (err)
 			return err;
 
-		err = mmc_decode_scr(card);
-		if (err)
-			return err;
+		pr_err("debug: first raw_scr:  0x%x  %x\n", card->raw_scr[0], card->raw_scr[1]);
 
+		err = mmc_decode_scr(card);
+
+		if (err) {
+			pr_err("debug: SD SCR ERROR! RETRY\n");
+			err = mmc_app_send_scr(card, card->raw_scr);
+			if (err)
+				return err;
+
+			err = mmc_decode_scr(card);
+			if (err)
+				return err;
+		}
 		/*
 		 * Fetch and process SD Status register.
 		 */
@@ -1107,7 +1124,7 @@ static int _mmc_sd_suspend(struct mmc_host *host)
 
 	mmc_claim_host(host);
 
-	if (mmc_card_suspended(host->card))
+	if (mmc_card_suspended(host->card) || mmc_card_removed(host->card))
 		goto out;
 
 	if (!mmc_host_is_spi(host))
@@ -1188,16 +1205,8 @@ out:
  */
 static int mmc_sd_resume(struct mmc_host *host)
 {
-	int err = 0;
-
-	if (!(host->caps & MMC_CAP_RUNTIME_RESUME)) {
-		err = _mmc_sd_resume(host);
-		pm_runtime_set_active(&host->card->dev);
-		pm_runtime_mark_last_busy(&host->card->dev);
-	}
 	pm_runtime_enable(&host->card->dev);
-
-	return err;
+	return 0;
 }
 
 /*
@@ -1225,12 +1234,9 @@ static int mmc_sd_runtime_resume(struct mmc_host *host)
 {
 	int err;
 
-	if (!(host->caps & (MMC_CAP_AGGRESSIVE_PM | MMC_CAP_RUNTIME_RESUME)))
-		return 0;
-
 	err = _mmc_sd_resume(host);
 	if (err)
-		pr_err("%s: error %d doing aggressive resume\n",
+		pr_err("%s: error %d doing runtime resume\n",
 			mmc_hostname(host), err);
 
 	return 0;

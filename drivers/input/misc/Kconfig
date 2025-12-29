@@ -812,4 +812,135 @@ config INPUT_DRV2667_HAPTICS
 	  To compile this driver as a module, choose M here: the
 	  module will be called drv2667-haptics.
 
+config INPUT_AKM09911
+     tristate "AKM magnetic device with I2C bus"
+     depends on I2C
+     default n
+     help
+       Say Y here if you have a AKM magnetic device on the board and use I2C
+       communication, else say N.
+
+       To compile this driver as a module, choose M here.
+
+config INPUT_LIS3DH_I2C_INTERRUPT
+	tristate "ST lid3dh 3-Axid accelerometer device with I2C bus for interrupt mode"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a lis3dh device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here
+
+config INPUT_LTR558_I2C
+	tristate "LTR558 proximity and light sensor device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a LTR558 device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+
+config INPUT_EPL2182_I2C
+	tristate "epl2182 proximity and light sensor device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a epl2182 device on the board and use I2C
+	  communication, else say N.
+config INPUT_QMA6981_I2C
+	tristate "QMA6981 accelerometer sensor device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a QMA6981 device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+config INPUT_EPL259x_I2C
+	tristate "EPL259x proximity and light sensor device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a EPL259x device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+
+config INPUT_SC2705_HAPTICS
+	tristate "Spreadtrum Communications SC2705 haptics support"
+	depends on I2C
+	select INPUT_FF_MEMLESS
+	select REGMAP_I2C
+	default n
+	help
+	  This option enables support for the SC2705 haptics driver
+	  which supports ff-memless interface from input framework.
+
+	  To compile this driver as module, choose M here: the
+	  module will be called sc2705-haptic.
+
+config ZTE_SENSOR_COMMON
+	tristate "senso common with I2C bus"
+	depends on I2C
+	help
+		Say Y here if you use this
+
+if ZTE_SENSOR_COMMON
+config INPUT_N2DM_I2C
+	tristate "N2DM accelerometer device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a n2dm device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+
+config INPUT_STK8BAXX_I2C
+	tristate "ST stk8baxx 3-Axid accelerometer device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a stk8baxx device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+
+# mCube start
+config INPUT_MC3XXX_I2C
+	tristate "mCube mc3xxx 3-Axis accelerometer device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a mc3xxx device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+# mCube end
+
+config INPUT_KIONIX_ACCEL
+	tristate "mCube kionix 3-Axis accelerometer device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a kionix device on the board and use I2C
+	  communication, else say N.
+
+	  To compile this driver as a module, choose M here.
+
+endif
+
+config INPUT_SX932X
+	tristate "SAR sensor device with I2C bus"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a sx932x device on the board and use I2C
+	  communication, else say N.
+
+	  #To compile this driver as a module, choose M here.
+
+source "drivers/input/misc/lis2dh/Kconfig"
 endif

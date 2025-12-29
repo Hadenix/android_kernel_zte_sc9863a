@@ -148,7 +148,6 @@ config USB_MSM_OTG
 	tristate "Qualcomm on-chip USB OTG controller support"
 	depends on (USB || USB_GADGET) && (ARCH_QCOM || COMPILE_TEST)
 	depends on RESET_CONTROLLER
-	depends on REGULATOR
 	depends on EXTCON
 	select USB_PHY
 	help
@@ -230,5 +229,54 @@ config DUAL_ROLE_USB_INTF
 	  dual role usb phys. The usb phy drivers can register to
 	  this interface to expose it capabilities to the userspace
 	  and thereby allowing userspace to change the port mode.
+
+config SPRD_USB3_PHY
+	tristate "Spreadtrum USB3 PHY Driver"
+	select USB_PHY
+	depends on USB_DWC3_SPRD
+	help
+	  Enable this to support the USB3 PHY that is part of SOC. This driver
+	  takes care of all the PHY functionality, normally paired with
+	  DesignWare USB3.0 (DRD) Controller.
+
+config SPRD_INTEL_USB3_PHY
+	tristate "Spreadtrum USB3 PHY(Intel) Driver"
+	select USB_PHY
+	depends on USB_DWC3_SPRD
+	help
+	  Enable this to support the USB3 PHY(Intel) that is part of SOC. This driver
+	  takes care of all the PHY functionality, normally paired with
+	  DesignWare USB3.0 (DRD) Controller.
+
+config SPRD_USB2_PHY
+	bool 'USE SPRD USB2 PHY'
+	select USB_PHY
+	help
+	  Enable this to support the SPRD USB2 PHY that is part of SOC. This driver
+	  takes care of all the PHY functionality, normally paired with
+	  DesignWare USB20 (DRD) Controller.
+
+config SNPS_USB2_PHY
+	bool 'USE SNPS USB2 PHY'
+	select USB_PHY
+	help
+	  Enable this to support the SYNOPSYS USB2 PHY that is part of SOC. This driver
+	  takes care of all the PHY functionality, normally paired with
+	  DesignWare USB20 (DRD) Controller.
+
+config USB_SPRD_TYPEC
+	tristate "Spreadtrum USB Type-C v1.1"
+	depends on MFD_SPRD_PMIC
+	default n
+	help
+	  Select this when you want to enable Spreadtrum Type-C v1.1 module.
+
+config SPRD_SHARKL3_USB2_PHY
+	tristate 'Spreadtrum Sharkl3 USB2 PHY Driver'
+	select USB_PHY
+	help
+	  Enable this to support the SPRD SHARKL3 USB2 PHY that is part of SOC.
+	  This driver takes care of all the PHY functionality, normally paired with
+	  DesignWare USB20 (DRD) Controller.
 
 endmenu

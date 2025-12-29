@@ -65,6 +65,11 @@ do {									\
 
 #endif /* DUMP_MSGS */
 
+#if defined(CONFIG_USB_MAC)
+#define SC_GET_CONFIGRATION		0x46
+#define SC_SET_CD_SPEED			0xbb
+#endif
+
 /* Length of a SCSI Command Data Block */
 #define MAX_COMMAND_SIZE	16
 
@@ -120,7 +125,7 @@ static inline bool fsg_lun_is_open(struct fsg_lun *curlun)
 }
 
 /* Default size of buffer length. */
-#define FSG_BUFLEN	((u32)16384)
+#define FSG_BUFLEN	((u32)65536)
 
 /* Maximal number of LUNs supported in mass storage function */
 #define FSG_MAX_LUNS	16

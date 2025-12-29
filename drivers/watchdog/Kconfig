@@ -161,6 +161,14 @@ config XILINX_WATCHDOG
 	  To compile this driver as a module, choose M here: the
 	  module will be called of_xilinx_wdt.
 
+config SPRD_PMIC_WATCHDOG
+	bool "SPRD PMIC WDT Watchdog timer"
+	depends on SPI_SPRD_ADI
+	help
+	  If you have a PMIC  watchdog board, say Y here, When PMIC watchdog
+	  is triggered, PMIC system, AP system and modem systemare both reset
+	  by power.
+
 # ALPHA Architecture
 
 # ARM Architecture
@@ -577,6 +585,13 @@ config LPC18XX_WATCHDOG
 	  processors.
 	  To compile this driver as a module, choose M here: the
 	  module will be called lpc18xx_wdt.
+
+config SPRD_WATCHDOG_SYS
+	bool "Spreadtrum Watchdog Timer"
+	depends on ARCH_SPRD
+	help
+	  This is the driver for the hardware watchdog on Spreadtrum chip.
+	  If you wish to have watchdog support enabled, say Y, otherwise say N.
 
 # AVR32 Architecture
 

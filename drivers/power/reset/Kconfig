@@ -173,5 +173,17 @@ config POWER_RESET_ZX
 	help
 	  Reboot support for ZTE SoCs.
 
+config POWER_RESET_SC2723
+	bool "PMIC SC2723 power off driver"
+	depends on PMIC_SC2723
+	help
+	  This driver supports poweroff for Spreadtrum boards.
+
+config POWER_RESET_SC27XX
+	bool "PMIC SC27XX power off driver"
+	depends on PMIC_SC2721 || PMIC_SC2731 || PMIC_SC2720
+	help
+	  This driver supports poweroff for Spreadtrum boards.
+
 endif
 

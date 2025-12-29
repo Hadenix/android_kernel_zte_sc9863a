@@ -463,7 +463,7 @@ static void _kfree_list_dev_rcu(struct rcu_head *head)
 static void _remove_list_dev(struct device_list_opp *list_dev,
 			     struct device_opp *dev_opp)
 {
-	list_del(&list_dev->node);
+	list_del_rcu(&list_dev->node);
 	call_srcu(&dev_opp->srcu_head.srcu, &list_dev->rcu_head,
 		  _kfree_list_dev_rcu);
 }
@@ -955,7 +955,12 @@ int dev_pm_opp_add(struct device *dev, unsigned long freq, unsigned long u_volt)
 	return _opp_add_v1(dev, freq, u_volt, true);
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_add);
-
+int dev_pm_opp_add_undynamic(struct device *dev, unsigned long freq,
+				unsigned long u_volt)
+{
+	return _opp_add_v1(dev, freq, u_volt, false);
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_add_undynamic);
 /**
  * _opp_set_availability() - helper to set the availability of an opp
  * @dev:		device for which we do this operation

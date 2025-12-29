@@ -550,4 +550,9 @@ config MTD_NAND_HISI504
 	help
 	  Enables support for NAND controller on Hisilicon SoC Hip04.
 
+config MTD_NAND_SPRD
+	tristate "Support for NAND controller on SPRD SoC sharkle"
+	help
+	  Enables support for NAND controller on SPRD SoC sharkle.
+
 endif # MTD_NAND

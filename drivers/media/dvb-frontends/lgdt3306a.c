@@ -1975,7 +1975,7 @@ static const short regtab[] = {
 	0x1036, /* 1'b0 1'b1 1'b0 1'b0 SAMGSEND_CQS[3:0] 01001110 */
 	0x103c, /* SAMGSAUTOSTL_V[3:0] SAMGSAUTOEDL_V[3:0] 01000110 */
 	0x103d, /* 1'b1 1'b1 SAMCNORMBP_V[1:0] 1'b0 1'b0 SAMMODESEL_V[1:0] 11100001 */
-	0x103f, /* SAMZTEDSE */
+	0x103f, 
 	0x105d, /* EQSTATUSE */
 	0x105f, /* x PMAPG2_V[2:0] x DMAPG2_V[2:0] x001x011 */
 	0x1060, /* 1'b1 EQSTATUSE */

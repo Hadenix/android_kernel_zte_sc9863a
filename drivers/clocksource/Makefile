@@ -45,6 +45,8 @@ obj-$(CONFIG_VF_PIT_TIMER)	+= vf_pit_timer.o
 obj-$(CONFIG_CLKSRC_QCOM)	+= qcom-timer.o
 obj-$(CONFIG_MTK_TIMER)		+= mtk_timer.o
 obj-$(CONFIG_CLKSRC_PISTACHIO)	+= time-pistachio.o
+obj-$(CONFIG_CLKSRC_SPRD)	+= sprd-timer.o
+obj-$(CONFIG_ARCH_SPRD)		+= sprd-persistent-clock.o
 obj-$(CONFIG_CLKSRC_TI_32K)	+= timer-ti-32k.o
 
 obj-$(CONFIG_ARM_ARCH_TIMER)		+= arm_arch_timer.o

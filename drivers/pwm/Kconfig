@@ -433,4 +433,19 @@ config PWM_VT8500
 	  To compile this driver as a module, choose M here: the module
 	  will be called pwm-vt8500.
 
+config PWM_SPRD
+	tristate "SPRD PWM support"
+	help
+	  Generic PWM framework driver for SPRD.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called pwm-sprd.
+
+config PWM_SPRD_PMIC
+        tristate "SPRD PMIC PWM support"
+        help
+          Generic PWM framework driver for SPRD PMIC chip.
+
+          To compile this driver as a module, choose M here: the module
+          will be called pwm-pmic.
 endif

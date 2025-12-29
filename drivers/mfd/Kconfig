@@ -234,6 +234,28 @@ config MFD_DA9150
 	  Additional drivers must be enabled in order to use the specific
 	  features of the device.
 
+config MFD_SC2705
+	tristate "Spreadtrum Communications SC2705 Charger chip"
+	depends on I2C=y
+	select MFD_CORE
+	select REGMAP_I2C
+	select REGMAP_IRQ
+	help
+	  This adds support for the SC2705 charger chip. This driver provides
+	  common support for accessing the device. Additional drivers must be
+	  enabled in order to use the specific features of the device.
+
+config MFD_SC2703
+	tristate "Spreadtrum Communications SC2703 Charger"
+	depends on I2C=y
+	select MFD_CORE
+	select REGMAP_I2C
+	select REGMAP_IRQ
+	help
+	  This adds support for the SC2703 charger. This driver provides
+	  common support for accessing the device. Additional drivers must be
+	  enabled in order to use the specific features of the device.
+
 config MFD_DLN2
 	tristate "Diolan DLN2 support"
 	select MFD_CORE
@@ -868,6 +890,51 @@ config MFD_SMSC
 
         To compile this driver as a module, choose M here: the
         module will be called smsc.
+
+config MFD_SPRD_PMIC
+	tristate "Spreadtrum SPI PMICs"
+	depends on OF
+	select REGMAP_SPI
+	select REGMAP_IRQ
+	help
+	  This enables support for the Spreadtrum SPI PMICs.
+
+config PMIC_SC2723
+	bool "Spreadtrum SC2723 PMIC Series Support"
+	select SPI_SPRD_ADI
+	select POWER_RESET_SC2723
+	select CHARGER_SC2723
+	select FGU_SC2723
+	select SPRD_7SRESET
+	help
+	  If you say yes here you get support for the SC2723 series of
+	  Power Management chips.
+
+config PMIC_SC2731
+	bool "Spreadtrum SC2731 PMIC Series Support"
+	select SPI_SPRD_ADI
+	select POWER_RESET_SC2731
+	select SPRD_7SRESET
+	help
+	  If you say yes here you get support for the SC2731 series of
+	  Power Management chips.
+
+config PMIC_SC2721
+	bool "Spreadtrum SC2721 PMIC Series Support"
+	select SPI_SPRD_ADI
+	select POWER_RESET_SC2721
+	select SPRD_7SRESET
+	help
+	  If you say yes here you get support for the SC2721 series of
+	  Power Management chips.
+
+config PMIC_SC2720
+	bool "Spreadtrum SC2720 PMIC Series Support"
+	select SPI_SPRD_ADI
+	select SPRD_7SRESET
+	help
+	  If you say yes here you get support for the SC2720 series of
+	  Power Management chips.
 
 config ABX500_CORE
 	bool "ST-Ericsson ABX500 Mixed Signal Circuit register functions"

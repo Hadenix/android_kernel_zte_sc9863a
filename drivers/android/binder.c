@@ -70,10 +70,18 @@
 #include <linux/pid_namespace.h>
 #include <linux/security.h>
 #include <linux/spinlock.h>
+#include <stdbool.h>
 
 #include <uapi/linux/android/binder.h>
 #include "binder_alloc.h"
 #include "binder_trace.h"
+
+#define LINE_PRINT_BYTE_LENGTH 10
+#define DUMP_BUFFER_LENGTH 120
+static u8 g_dump_buf[DUMP_BUFFER_LENGTH];
+static int g_buf_no_space_times;
+static int g_previous_pid;
+static int g_dump_buffer_loglevel;
 
 static HLIST_HEAD(binder_deferred_list);
 static DEFINE_MUTEX(binder_deferred_lock);
@@ -120,6 +128,10 @@ BINDER_DEBUG_ENTRY(proc);
 
 #define BINDER_SMALL_BUF_SIZE (PAGE_SIZE * 64)
 
+#ifndef ZTE_FEATURE_CGROUP_FREEZER
+#define ZTE_FEATURE_CGROUP_FREEZER               false
+#endif
+
 enum {
 	BINDER_DEBUG_USER_ERROR             = 1U << 0,
 	BINDER_DEBUG_FAILED_TRANSACTION     = 1U << 1,
@@ -136,6 +148,7 @@ enum {
 	BINDER_DEBUG_INTERNAL_REFS          = 1U << 12,
 	BINDER_DEBUG_PRIORITY_CAP           = 1U << 13,
 	BINDER_DEBUG_SPINLOCKS              = 1U << 14,
+	BINDER_DEBUG_DUMP_BUFFER            = 1U << 15,
 };
 static uint32_t binder_debug_mask = BINDER_DEBUG_USER_ERROR |
 	BINDER_DEBUG_FAILED_TRANSACTION | BINDER_DEBUG_DEAD_TRANSACTION;
@@ -2819,8 +2832,24 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 		binder_transaction_priority(thread->task, t, node_prio,
 					    node->inherit_rt);
 		binder_enqueue_thread_work_ilocked(thread, &t->work);
+/* ZSW_ADD FOR CPUFREEZER begin */
+#if ZTE_FEATURE_CGROUP_FREEZER == true
+		set_task_unfreezable(thread->task);
+		if (thread->task->flags & PF_FROZEN) {
+			__thaw_task(thread->task);
+		}
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
 	} else if (!pending_async) {
 		binder_enqueue_work_ilocked(&t->work, &proc->todo);
+/* ZSW_ADD FOR CPUFREEZER begin */
+#if ZTE_FEATURE_CGROUP_FREEZER == true
+		set_task_unfreezable(proc->tsk);
+		if (proc->tsk->flags & PF_FROZEN) {
+			__thaw_task(proc->tsk);
+		}
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
 	} else {
 		binder_enqueue_work_ilocked(&t->work, &node->async_todo);
 	}
@@ -2899,6 +2928,10 @@ static void binder_transaction(struct binder_proc *proc,
 	binder_size_t last_fixup_min_off = 0;
 	struct binder_context *context = proc->context;
 	int t_debug_id = atomic_inc_return(&binder_last_id);
+	size_t left_length = 0;
+	u8 *dump_buf = NULL;
+	int to_dump_buffer = 0;
+	int dump_length = 0;
 
 	e = binder_transaction_log_add(&binder_transaction_log);
 	e->debug_id = t_debug_id;
@@ -3127,6 +3160,63 @@ static void binder_transaction(struct binder_proc *proc,
 	t->buffer = binder_alloc_new_buf(&target_proc->alloc, tr->data_size,
 		tr->offsets_size, extra_buffers_size,
 		!reply && (t->flags & TF_ONE_WAY));
+
+	if ((binder_debug_mask & g_dump_buffer_loglevel ||
+		binder_debug_mask & BINDER_DEBUG_DUMP_BUFFER) &&
+		ERR_PTR(-ENOSPC) == t->buffer) {
+		if (g_buf_no_space_times++%20 == 0 ||
+			target_proc->pid != g_previous_pid)
+			to_dump_buffer = 1;
+
+		if (to_dump_buffer) {
+			if (tr->data_size > DUMP_BUFFER_LENGTH)
+				dump_length = DUMP_BUFFER_LENGTH;
+			else
+				dump_length = tr->data_size;
+			if (copy_from_user((void *)g_dump_buf,
+				(const void __user *) (uintptr_t)
+				tr->data.ptr.buffer, dump_length)) {
+				binder_user_error("%d:%d invalid data ptr\n",
+						proc->pid, thread->pid);
+			} else {
+				left_length = dump_length;
+				dump_buf = g_dump_buf;
+				while (left_length) {
+					if (left_length <
+						LINE_PRINT_BYTE_LENGTH) {
+						binder_debug(
+						g_dump_buffer_loglevel,
+							"dump buf: %0x\n",
+							*(dump_buf++));
+						--left_length;
+					} else {
+						binder_debug(
+						g_dump_buffer_loglevel,
+						"dump:%0x:%0x:%0x:%0x:%0x\n",
+							*dump_buf,
+							*(dump_buf + 1),
+							*(dump_buf + 2),
+							*(dump_buf + 3),
+							*(dump_buf + 4));
+						binder_debug(
+						g_dump_buffer_loglevel,
+						"dump:%0x:%0x:%0x:%0x:%0x\n",
+							*(dump_buf + 5),
+							*(dump_buf + 6),
+							*(dump_buf + 7),
+							*(dump_buf + 8),
+							*(dump_buf + 9));
+						left_length -=
+						LINE_PRINT_BYTE_LENGTH;
+						dump_buf +=
+						LINE_PRINT_BYTE_LENGTH;
+					}
+				}
+			}
+		}
+		g_previous_pid = target_proc->pid;
+	}
+
 	if (IS_ERR(t->buffer)) {
 		/*
 		 * -ESRCH indicates VMA cleared. The target is dying.
@@ -3433,6 +3523,13 @@ err_invalid_target_handle:
 		     proc->pid, thread->pid, return_error, return_error_param,
 		     (u64)tr->data_size, (u64)tr->offsets_size,
 		     return_error_line);
+
+	if (target_proc)
+		binder_debug(g_dump_buffer_loglevel,
+			"target proc pid:%d\n", target_proc->pid);
+	if (target_thread)
+		binder_debug(g_dump_buffer_loglevel,
+			"target thread pid:%d\n", target_thread->pid);
 
 	{
 		struct binder_transaction_log_entry *fe;
@@ -5843,6 +5940,13 @@ static int __init binder_init(void)
 				    &binder_transaction_log_failed,
 				    &binder_transaction_log_fops);
 	}
+
+#ifdef CONFIG_ANDROID_BINDER_BUFFER_DEBUG
+	g_dump_buffer_loglevel = BINDER_DEBUG_FAILED_TRANSACTION;
+#else
+	g_dump_buffer_loglevel = BINDER_DEBUG_DUMP_BUFFER;
+#endif
+	g_previous_pid = 0;
 
 	/*
 	 * Copy the module_parameter string, because we don't want to

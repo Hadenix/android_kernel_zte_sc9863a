@@ -406,4 +406,16 @@ config XILINX_XADC
 	  The driver can also be build as a module. If so, the module will be called
 	  xilinx-xadc.
 
+config SPRD_ADC
+	tristate "SPRD ADC driver"
+	depends on IIO
+	help
+	  Say yes here to have support for the SPRD PMIC ADC. The driver .
+
+config SPRD_SC2720_ADC
+	tristate "SPRD SC2720 ADC driver"
+	depends on IIO
+	help
+	  Say yes here to have support for the SPRD PMIC SC2720 ADC.
+
 endmenu

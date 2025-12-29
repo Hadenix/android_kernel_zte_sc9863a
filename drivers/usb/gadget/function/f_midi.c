@@ -319,7 +319,7 @@ static int f_midi_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
 	struct f_midi *midi = func_to_midi(f);
 	struct usb_composite_dev *cdev = f->config->cdev;
-	unsigned i;
+	unsigned i, length;
 	int err;
 
 	/* For Control Device interface we do nothing */
@@ -352,12 +352,11 @@ static int f_midi_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 
 	midi->out_ep->driver_data = midi;
 
+	length = usb_ep_align_maybe(cdev->gadget, midi->out_ep, midi->buflen);
 	/* allocate a bunch of read buffers and queue them all at once. */
 	for (i = 0; i < midi->qlen && err == 0; i++) {
 		struct usb_request *req =
-			midi_alloc_ep_req(midi->out_ep,
-				max_t(unsigned, midi->buflen,
-					bulk_out_desc.wMaxPacketSize));
+			midi_alloc_ep_req(midi->out_ep, length);
 		if (req == NULL)
 			return -ENOMEM;
 

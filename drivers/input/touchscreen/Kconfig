@@ -11,6 +11,11 @@ menuconfig INPUT_TOUCHSCREEN
 
 if INPUT_TOUCHSCREEN
 
+source drivers/input/touchscreen/adaptive-ts/Kconfig
+
+source drivers/input/touchscreen/synaptics_dsx/Kconfig
+source drivers/input/touchscreen/zte_touchscreen/Kconfig
+
 config TOUCHSCREEN_PROPERTIES
 	def_tristate INPUT
 	depends on INPUT
@@ -322,6 +327,20 @@ config TOUCHSCREEN_FUJITSU
 	  module will be called fujitsu-ts.
 
 config TOUCHSCREEN_GOODIX
+	tristate "Goodix I2C touchscreen"
+	depends on I2C
+	help
+	  Say Y here if you have the Goodix touchscreen (such as one
+	  installed in Onda v975w tablets) connected to your
+	  system. It also supports 5-finger chip models, which can be
+	  found on ARM tablets, like Wexler TAB7200 and MSI Primo73.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called goodix.
+
+config TOUCHSCREEN_GOODIX5
 	tristate "Goodix I2C touchscreen"
 	depends on I2C
 	help
@@ -1106,4 +1125,27 @@ config TOUCHSCREEN_ROHM_BU21023
 	  To compile this driver as a module, choose M here: the
 	  module will be called bu21023_ts.
 
+config TOUCHSCREEN_GT1X_TS
+	tristate "GT1X TS Touchscreen interface support"
+	depends on I2C
+	help
+	  Say Y here if enable support for the Goodix GT1X multi fingers
+	  touchscreen controller.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called gt1x_ts.
+
+config TOUCHSCREEN_MSG2XXX_TS
+        tristate "MSG2xxx touchscreen driver"
+        depends on I2C
+           help
+             Say Y here if you have a MSG2XXX based touchscreen
+             controller.
+
+             If unsure, say N.
+
+             To compile this driver as a module, choose M here: the
+             module will be called msg2xxx_ts
 endif

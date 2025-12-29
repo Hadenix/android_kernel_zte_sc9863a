@@ -25,6 +25,8 @@
 #  define INPUT_COMPAT_TEST test_thread_flag(TIF_31BIT)
 #elif defined(CONFIG_MIPS)
 #  define INPUT_COMPAT_TEST test_thread_flag(TIF_32BIT_ADDR)
+#elif defined(CONFIG_ARM64)
+#  define INPUT_COMPAT_TEST is_compat_task()
 #else
 #  define INPUT_COMPAT_TEST test_thread_flag(TIF_32BIT)
 #endif

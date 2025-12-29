@@ -3,6 +3,7 @@
 #
 
 obj-$(CONFIG_IBM_ASM)		+= ibmasm/
+obj-$(CONFIG_SPRD_VOICETRIGGER_DRIVER)	+= rt5512/
 obj-$(CONFIG_AD525X_DPOT)	+= ad525x_dpot.o
 obj-$(CONFIG_AD525X_DPOT_I2C)	+= ad525x_dpot-i2c.o
 obj-$(CONFIG_AD525X_DPOT_SPI)	+= ad525x_dpot-spi.o
@@ -56,5 +57,22 @@ obj-$(CONFIG_GENWQE)		+= genwqe/
 obj-$(CONFIG_ECHO)		+= echo/
 obj-$(CONFIG_VEXPRESS_SYSCFG)	+= vexpress-syscfg.o
 obj-$(CONFIG_CXL_BASE)		+= cxl/
+obj-$(CONFIG_SPRD_VSP)          += sprd_vsp/
+obj-$(CONFIG_SPRD_VPP)          += sprd_vpp/
+obj-$(CONFIG_OTP_SPRD)		+= sprd_otp/
+# obj-$(CONFIG_BT_SC2331)		+= sprd_bt_lpm.o
+obj-$(CONFIG_SPRD_JPG)          += sprd_jpg/
+obj-$(CONFIG_SPRD_CAMERA)	+= sprd_camera/
+obj-$(CONFIG_MARLIN2)		+= sprdwcn_bsp/sc2342/
+obj-$(CONFIG_SC23XX)		+= sprdwcn_bsp/sc23xx/
+obj-$(CONFIG_INTEGRATED_MARLIN2_GE2)		+= sprdwcn_bsp/sc2342/
+obj-$(CONFIG_SPRD_7SRESET)	+= sprd_7sreset.o
+obj-$(CONFIG_SPRD_MCDT)		+= mcdt/
+obj-y 				+= sprd_audio/
+obj-$(CONFIG_MISC_DUAL_SIM_PLUG)        += dual-sim-plug/
 obj-$(CONFIG_UID_SYS_STATS) += uid_sys_stats.o
 obj-$(CONFIG_MEMORY_STATE_TIME) += memory_state_time.o
+obj-$(CONFIG_SPI_PEEL_INFRARED)	+= ir-peel/
+obj-$(CONFIG_SPRD_TMC)		+= sprd_tmc.o
+obj-$(CONFIG_QOS_SECURE_SETTING)        += secure_qos_setting.o
+obj-y  += sprd_map/

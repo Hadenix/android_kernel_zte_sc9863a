@@ -25,6 +25,9 @@ config MEDIA_CAMERA_SUPPORT
 
 	  Say Y when you have a webcam or a video capture grabber board.
 
+	  Note: In order to fix WARNING:
+		please write a paragraph that describes the config symbol fully.
+
 config MEDIA_ANALOG_TV_SUPPORT
 	bool "Analog TV support"
 	---help---
@@ -44,6 +47,9 @@ config MEDIA_DIGITAL_TV_SUPPORT
 
 	  Say Y when you have a board with digital support or a board with
 	  hybrid digital TV and analog TV.
+
+	  Note: In order to fix WARNING:
+		please write a paragraph that describes the config symbol fully.
 
 config MEDIA_RADIO_SUPPORT
 	bool "AM/FM radio receivers/transmitters support"
@@ -65,6 +71,9 @@ config MEDIA_SDR_SUPPORT
 	  Enable software defined radio support.
 
 	  Say Y when you have a software defined radio device.
+
+	  Note: In order to fix WARNING:
+		please write a paragraph that describes the config symbol fully.
 
 config MEDIA_RC_SUPPORT
 	bool "Remote Controller support"
@@ -218,3 +227,14 @@ source "drivers/media/tuners/Kconfig"
 source "drivers/media/dvb-frontends/Kconfig"
 
 endif # MEDIA_SUPPORT
+
+#
+#GSP driver
+#
+source "drivers/media/gsp/Kconfig"
+
+
+#
+#SPRD Radio driver
+#
+source "drivers/media/radio/sprd2331/Kconfig"

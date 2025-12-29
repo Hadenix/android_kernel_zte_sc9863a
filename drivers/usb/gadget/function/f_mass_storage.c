@@ -306,6 +306,8 @@ struct fsg_common {
 	struct completion	thread_notifier;
 	struct task_struct	*thread_task;
 
+	/* Callback functions. */
+	const struct fsg_operations	*ops;
 	/* Gadget's private data. */
 	void			*private_data;
 
@@ -334,6 +336,12 @@ struct fsg_dev {
 	struct usb_ep		*bulk_in;
 	struct usb_ep		*bulk_out;
 };
+
+#if defined(CONFIG_USB_MAC)
+static int scsi_build_toc_format0(u8 *buf, int msf, int start_track, struct fsg_lun *curlun);
+static int scsi_build_toc_format1(u8 *buf, int msf, int start_track, struct fsg_lun *curlun);
+static int scsi_build_toc_format2(u8 *buf, int msf, struct fsg_lun *curlun);
+#endif
 
 static inline int __fsg_is_set(struct fsg_common *common,
 			       const char *func, unsigned line)
@@ -397,11 +405,7 @@ static int fsg_set_halt(struct fsg_dev *fsg, struct usb_ep *ep)
 /* Caller must hold fsg->lock */
 static void wakeup_thread(struct fsg_common *common)
 {
-	/*
-	 * Ensure the reading of thread_wakeup_needed
-	 * and the writing of bh->state are completed
-	 */
-	smp_mb();
+	smp_wmb();	/* ensure the write of bh->state is complete */
 	/* Tell the main thread that something has happened */
 	common->thread_wakeup_needed = 1;
 	if (common->thread_task)
@@ -632,12 +636,7 @@ static int sleep_thread(struct fsg_common *common, bool can_freeze)
 	}
 	__set_current_state(TASK_RUNNING);
 	common->thread_wakeup_needed = 0;
-
-	/*
-	 * Ensure the writing of thread_wakeup_needed
-	 * and the reading of bh->state are completed
-	 */
-	smp_mb();
+	smp_rmb();	/* ensure the latest bh->state is visible */
 	return rc;
 }
 
@@ -814,7 +813,13 @@ static int do_write(struct fsg_common *common)
 			curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
 			return -EINVAL;
 		}
+
+		#if defined(CONFIG_USB_MAC)
+		if (common->cmnd[1] & 0x08) {	/* FUA */
+		#else
 		if (!curlun->nofua && (common->cmnd[1] & 0x08)) { /* FUA */
+		#endif
+
 			spin_lock(&curlun->filp->f_lock);
 			curlun->filp->f_flags |= O_SYNC;
 			spin_unlock(&curlun->filp->f_lock);
@@ -1090,6 +1095,99 @@ static int do_verify(struct fsg_common *common)
 	return 0;
 }
 
+#if defined(CONFIG_USB_MAC)
+struct ms_get_configration_data_header_type {
+	u32		data_length;
+	u16		reserve;
+	u16		current_profile;
+} __packed;
+
+struct ms_get_configration_data_feature_type {
+	u16		feature_code;
+	u8		length;
+	const	u8 *data;
+} __packed;
+
+static int do_get_configuration(struct fsg_common *common, struct fsg_buffhd *bh)
+{
+	static  u8 feature_0000[] = {0x00, 0x00, 0x03, 0x04, 0x00, 0x08, 0x00, 0x00};	/* profile list:CDROM*/
+	static  u8 feature_0001[] = {0x00, 0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0x02};	/*Core*/
+	static  u8 feature_0002[] = {0x00, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00};
+	static  u8 feature_0003[] = {0x00, 0x03, 0x03, 0x04, 0x29, 0x00, 0x00, 0x00};	/* Removable media*/
+	static  u8 feature_0010[] = {0x00, 0x10, 0x00, 0x08, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01, 0x01, 0x00};
+	static  u8 feature_001d[] = {0x00, 0x1d, 0x00, 0x00};
+	static  u8 feature_0100[] = {0x01, 0x00, 0x03, 0x00};	/* Power management*/
+	/*static  u8 feature_0103[] = {0x01,0x03,0x00,0x04,0x03,0x00,0x01,0x00}; */
+	static  u8 feature_0104[] = {0x01, 0x04, 0x03, 0x00};
+	static  u8 feature_0105[] = {0x01, 0x05, 0x03, 0x00};	/*Timeout*/
+	static  u8 feature_0108[] = {0x01, 0x08, 0x03, 0x00};	/*Logic unit serial number*/
+	static struct ms_get_configration_data_feature_type feature_list[] = {
+		{0x0000, 8, feature_0000},
+		{0x0001, 8, feature_0001},
+		{0x0002, 8, feature_0002},
+		{0x0003, 8, feature_0003},
+		{0x0010, 12, feature_0010},
+		{0x001d, 4, feature_001d},
+		{0x0100, 4, feature_0100},
+		/*{0x0103,8,feature_0103},*/
+		{0x0104, 4, feature_0104},
+		{0x0105, 4, feature_0105},
+		{0x0108, 4, feature_0108}
+	};
+	unsigned int reply_len;
+	u8  i = 0;
+	bool  feature_is_found = 0;
+	int starting_feature_num = get_unaligned_be16(&common->cmnd[2]);
+	u8 rt_field = common->cmnd[1] & 0x03;
+	u8 *buffer = (u8 *)bh->buf;
+	u8 *current_ptr;
+	struct ms_get_configration_data_header_type *header_data_ptr =
+			(struct ms_get_configration_data_header_type *)buffer;
+	/*first init feature head */
+	memset((void *)header_data_ptr, 0, sizeof(struct ms_get_configration_data_header_type));
+	header_data_ptr->data_length = 4;
+	current_ptr = buffer + sizeof(struct ms_get_configration_data_header_type);
+
+	/* profile 0x0800 is quite important to cdrom utitil on ubuntu */
+	header_data_ptr->current_profile = 0x0800;
+
+	if ((rt_field == 0) && (starting_feature_num == 0)) {	/*request all features*/
+		/*fill all features*/
+		for (i = 0; i < ARRAY_SIZE(feature_list); i++) {
+			memcpy(current_ptr, feature_list[i].data, feature_list[i].length);
+			current_ptr = current_ptr + feature_list[i].length;
+			header_data_ptr->data_length += feature_list[i].length;
+		}
+
+		if (common->data_size_from_cmnd > header_data_ptr->data_length + 20)	/* any value */
+			feature_is_found = 0;
+		else
+			feature_is_found = 1;
+	} else {	/* request definite features*/
+		/*finding matching  features*/
+		for (i = 0; i < ARRAY_SIZE(feature_list); i++) {
+			if (feature_list[i].feature_code == starting_feature_num) {
+				feature_is_found = 1;
+				break;
+			}
+		}
+
+		/*when find  features*/
+		if (feature_is_found) {
+			memcpy(current_ptr, feature_list[i].data, feature_list[i].length);
+			header_data_ptr->data_length += feature_list[i].length;
+		}
+	}
+
+		/* calc data length*/
+	reply_len = header_data_ptr->data_length + 4;
+	header_data_ptr->data_length = get_unaligned_be32(header_data_ptr);
+	if (common->data_size_from_cmnd < reply_len) {
+		reply_len = common->data_size_from_cmnd;
+	}
+	return reply_len;
+}
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -1212,6 +1310,7 @@ static int do_read_header(struct fsg_common *common, struct fsg_buffhd *bh)
 	return 8;
 }
 
+#ifndef CONFIG_USB_MAC
 static int do_read_toc(struct fsg_common *common, struct fsg_buffhd *bh)
 {
 	struct fsg_lun	*curlun = common->curlun;
@@ -1238,6 +1337,290 @@ static int do_read_toc(struct fsg_common *common, struct fsg_buffhd *bh)
 	store_cdrom_address(&buf[16], msf, curlun->num_sectors);
 	return 20;
 }
+#else
+
+#define SCSI_FLAG_SESSION_LEAD_OUT		0xAA
+#define SCSI_FLAG_TOC_MASK_FORMAT		0xC0
+
+static int do_read_toc(struct fsg_common *common, struct fsg_buffhd *bh)
+{
+	struct fsg_lun	*curlun = common->curlun;
+	int		msf = common->cmnd[1] & 0x02;
+	int		start_track = common->cmnd[6];
+	u8		*buf = (u8 *)bh->buf;
+
+	u8		format = common->cmnd[2] & 0xf;
+	u8		control = common->cmnd[9];
+	u8		reply_size = 0;
+
+
+	if ((common->cmnd[1] & ~0x02) != 0 ||	/* Mask away MSF */
+			start_track > 1) {
+		curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
+		return -EINVAL;
+	}
+
+	switch (format) {
+	case 0:		/* format 0*/
+		{
+		if ((control & SCSI_FLAG_TOC_MASK_FORMAT) == 0) {
+			reply_size = scsi_build_toc_format0(buf, msf, start_track, curlun);
+		} else if ((control&SCSI_FLAG_TOC_MASK_FORMAT) == 0x40) {		/* linux used*/
+			reply_size = scsi_build_toc_format1(buf, msf, start_track, curlun);
+		} else {		/* mac used*/
+			reply_size = scsi_build_toc_format2(buf, msf, curlun);
+		}
+		break;
+		}
+
+	case 1:		/*format 1*/
+		{
+		reply_size = scsi_build_toc_format1(buf, msf, start_track, curlun);
+		break;
+		}
+
+	default:
+		{
+		reply_size = scsi_build_toc_format2(buf, msf, curlun);
+		break;
+		}
+	}
+
+	return reply_size;
+
+}
+
+/*---------------------------------------
+ scsi response data type
+-----------------------------------------*/
+struct ms_read_toc_data_header_type {
+	u16		data_length;
+	u8		first_track_num;
+	u8		last_track_num;
+} __packed;
+
+struct ms_read_toc_data_track0_type {
+	u8	reserve;
+	u8	addr_control;
+	u8	track_number;
+	u8	reserve0;
+	u32	track_start_address;
+} __packed;
+
+struct ms_read_toc_data_track2_type {
+	u8	session_number;
+	u8	addr_control;
+	u8	tno;
+	u8	point;
+	u8	min;
+	u8	sec;
+	u8	frame;
+	u8	zero;
+	u8	pmin;
+	u8	psec;
+	u8	pframe;
+} __packed;
+static u32 ms_scsi_lba_to_msf(u32 lba)
+{
+	u8 m, s, f;
+	u32 msf_value = 0;
+
+	m = lba / (60*75);
+	s = lba/75 - m*60 + 2;
+	f = lba - m*60*75 - (s-2)*75;
+
+	msf_value = (f<<16) | (s<<8) | m;
+
+	return get_unaligned_be32((u8 *)&msf_value);
+}
+static int scsi_build_toc_format0(u8 *buf, int msf, int start_track, struct fsg_lun *curlun)
+{
+	int length = 0;
+		struct ms_read_toc_data_header_type *toc_data_header_ptr;
+		struct ms_read_toc_data_track0_type *toc_msf_data_track0_ptr;
+	toc_data_header_ptr = (struct ms_read_toc_data_header_type *)buf;
+
+	toc_data_header_ptr->first_track_num = 1; /* First track number */
+		toc_data_header_ptr->last_track_num = 1; /* Last track number */
+
+	toc_data_header_ptr->data_length = 2 + sizeof(struct ms_read_toc_data_track0_type); /* TOC data length*/
+		length = sizeof(struct ms_read_toc_data_header_type) + sizeof(struct ms_read_toc_data_track0_type);
+		if (start_track != SCSI_FLAG_SESSION_LEAD_OUT) {
+			toc_data_header_ptr->data_length += sizeof(struct ms_read_toc_data_track0_type);
+			length += sizeof(struct ms_read_toc_data_track0_type);
+		}
+	toc_data_header_ptr->data_length = get_unaligned_be16((u8 *)&toc_data_header_ptr->data_length);
+	toc_msf_data_track0_ptr =
+		(struct ms_read_toc_data_track0_type *)(buf + sizeof(struct ms_read_toc_data_header_type));
+	memset((void *)toc_msf_data_track0_ptr, 0, sizeof(struct ms_read_toc_data_track0_type));
+
+	if (start_track != SCSI_FLAG_SESSION_LEAD_OUT) {
+			toc_msf_data_track0_ptr->addr_control = 0x14;	/* Data track, copying allowed, 0x16 */
+			toc_msf_data_track0_ptr->track_number = 1;	/* Only track is number 1 */
+
+		if (msf) {
+			toc_msf_data_track0_ptr->track_start_address = ms_scsi_lba_to_msf(0);
+		}
+		/* next track info*/
+		toc_msf_data_track0_ptr =
+		(struct ms_read_toc_data_track0_type *)(buf + sizeof(struct ms_read_toc_data_header_type) +
+			sizeof(struct ms_read_toc_data_track0_type));
+		memset((void *)toc_msf_data_track0_ptr, 0, sizeof(struct ms_read_toc_data_track0_type));
+		}
+
+	toc_msf_data_track0_ptr->addr_control = 0x14;	/* Lead-out track number, 0x16 */
+	toc_msf_data_track0_ptr->track_number = 0xaa;	/* Lead-out track number */
+		if (msf) {
+			toc_msf_data_track0_ptr->track_start_address = ms_scsi_lba_to_msf(curlun->num_sectors);
+		} else {
+			toc_msf_data_track0_ptr->track_start_address = curlun->num_sectors;
+			toc_msf_data_track0_ptr->track_start_address =
+				get_unaligned_be32((u8 *)&toc_msf_data_track0_ptr->track_start_address);
+		}
+	return length;
+}
+static int scsi_build_toc_format1(u8 *buf, int msf, int start_track, struct fsg_lun *curlun)
+{
+	int  length = 0;
+	struct ms_read_toc_data_header_type *toc_data_header_ptr;
+	struct ms_read_toc_data_track0_type *toc_msf_data_track0_ptr;
+
+	toc_data_header_ptr = (struct ms_read_toc_data_header_type *)buf;
+	toc_data_header_ptr->first_track_num = 1;
+	toc_data_header_ptr->last_track_num = 1;
+
+	toc_data_header_ptr->data_length = 2 + sizeof(struct ms_read_toc_data_track0_type);
+	length = sizeof(struct ms_read_toc_data_header_type) + sizeof(struct ms_read_toc_data_track0_type);
+	toc_data_header_ptr->data_length = get_unaligned_be16((u8 *)&toc_data_header_ptr->data_length);
+
+	toc_msf_data_track0_ptr =
+		(struct ms_read_toc_data_track0_type *)(buf + sizeof(struct ms_read_toc_data_header_type));
+	memset((void *)toc_msf_data_track0_ptr, 0, sizeof(struct ms_read_toc_data_track0_type));
+
+	toc_msf_data_track0_ptr->addr_control = 0x14;
+	toc_msf_data_track0_ptr->track_number = 1;
+
+	if (msf) {
+		toc_msf_data_track0_ptr->track_start_address =  ms_scsi_lba_to_msf(0);
+	}
+	return length;
+}
+static int scsi_build_toc_format2(u8 *buf, int msf, struct fsg_lun *curlun)
+{
+	int  length = 0;
+	u32 lba = curlun->num_sectors;
+	struct ms_read_toc_data_header_type *toc_data_header_ptr;
+	struct ms_read_toc_data_track2_type *toc_msf_data_track2_ptr;
+
+	toc_data_header_ptr = (struct ms_read_toc_data_header_type *)buf;
+	toc_data_header_ptr->data_length = 46;
+	toc_data_header_ptr->data_length = get_unaligned_be16((u8 *)&toc_data_header_ptr->data_length);
+
+	toc_msf_data_track2_ptr =
+		(struct ms_read_toc_data_track2_type *)(buf + sizeof(struct ms_read_toc_data_header_type));
+	memset((void *)toc_msf_data_track2_ptr, 0, sizeof(struct ms_read_toc_data_track2_type));
+	toc_msf_data_track2_ptr->session_number = 1;
+	toc_msf_data_track2_ptr->addr_control = 0x14;
+	toc_msf_data_track2_ptr->point = 0xa0;
+	toc_msf_data_track2_ptr->pmin = 1;
+	toc_msf_data_track2_ptr->psec = 0;
+	toc_msf_data_track2_ptr->pframe = 0;
+
+	toc_msf_data_track2_ptr =
+		(struct ms_read_toc_data_track2_type *)(buf + sizeof(struct ms_read_toc_data_header_type) +
+			sizeof(struct ms_read_toc_data_track2_type));
+	memset((void *)toc_msf_data_track2_ptr, 0, sizeof(struct ms_read_toc_data_track2_type));
+	toc_msf_data_track2_ptr->session_number = 1;
+	toc_msf_data_track2_ptr->addr_control = 0x14;
+	toc_msf_data_track2_ptr->point = 0xa1;
+	toc_msf_data_track2_ptr->pmin = 1;
+	toc_msf_data_track2_ptr->psec = 0;
+	toc_msf_data_track2_ptr->pframe = 0;
+
+	toc_msf_data_track2_ptr =
+		(struct ms_read_toc_data_track2_type *)(buf + sizeof(struct ms_read_toc_data_header_type) +
+			2*sizeof(struct ms_read_toc_data_track2_type));
+	memset((void *)toc_msf_data_track2_ptr, 0, sizeof(struct ms_read_toc_data_track2_type));
+	toc_msf_data_track2_ptr->session_number = 1;
+	toc_msf_data_track2_ptr->addr_control = 0x14;
+	toc_msf_data_track2_ptr->point = 0xa2;
+
+	toc_msf_data_track2_ptr->pmin = (u8)(lba/(60*75));
+	toc_msf_data_track2_ptr->psec = (u8)(lba/75-toc_msf_data_track2_ptr->pmin*60) + 2;
+	toc_msf_data_track2_ptr->pframe =
+		(u8)(lba-toc_msf_data_track2_ptr->pmin*60*75-(toc_msf_data_track2_ptr->psec-2)*75);
+
+	toc_msf_data_track2_ptr =
+		(struct ms_read_toc_data_track2_type *)(buf + sizeof(struct ms_read_toc_data_header_type) +
+			3*sizeof(struct ms_read_toc_data_track2_type));
+	memset((void *)toc_msf_data_track2_ptr, 0, sizeof(struct ms_read_toc_data_track2_type));
+	toc_msf_data_track2_ptr->session_number = 1;
+	toc_msf_data_track2_ptr->addr_control = 0x14;
+	toc_msf_data_track2_ptr->point = 0x01;
+	toc_msf_data_track2_ptr->pmin = 0;
+	toc_msf_data_track2_ptr->psec = 2;
+	toc_msf_data_track2_ptr->pframe = 0;
+
+	length = sizeof(struct ms_read_toc_data_header_type) + 4*sizeof(struct ms_read_toc_data_track2_type);
+	return length;
+}
+
+#endif
+
+
+#ifndef CONFIG_USB_MAC
+
+static int do_read_toc_mac(struct fsg_common *common, struct fsg_buffhd *bh)
+{
+	u8		*buf = (u8 *)bh->buf;
+
+	if ((common->cmnd[9] & 0xc0) != 0x80)
+		return -EINVAL;
+
+	buf[0] = 0x0;			/* TOC data length */
+	buf[1] = (37-2);
+	buf[2] = 1;			/* First track number */
+	buf[3] = 1;			/* Last track number */
+
+	buf[4] = 1;			/* session num */
+	buf[5] = 0x16;		/* Data track, copying allowed */
+	buf[6] = 0x0;			/* TNO */
+	buf[7] = 0xA0;		/* POINT */
+	buf[8] = 0x0;			/* MIN */
+	buf[9] = 0x0;			/* SEC */
+	buf[10] = 0x0;		/* FRAME */
+	buf[11] = 0x0;		/* ZERO */
+	buf[12] = 0x01;		/* first track number*/
+	buf[13] = 0x0;		/* PSEC disc type*/
+	buf[14] = 0x0;		/* PFRAME */
+
+	buf[15] = 1;			/* session num */
+	buf[16] = 0x16;		/* Data track, copying allowed */
+	buf[17] = 0x0;		/* TNO */
+	buf[18] = 0xA1;		/* POINT */
+	buf[19] = 0x0;		/* MIN */
+	buf[20] = 0x0;		/* SEC */
+	buf[21] = 0x0;		/* FRAME */
+	buf[22] = 0x0;		/* ZERO */
+	buf[23] = 0x01;		/* last track number*/
+	buf[24] = 0x0;		/* PSEC disc type*/
+	buf[25] = 0x0;		/* PFRAME */
+
+	buf[26] = 1;			/* session num */
+	buf[27] = 0x16;		/* Data track, copying allowed */
+	buf[28] = 0x0;		/* TNO */
+	buf[29] = 0xA2;		/* POINT */
+	buf[30] = 0x0;		/* MIN */
+	buf[31] = 0x0;		/* SEC */
+	buf[32] = 0x0;		/* FRAME */
+	buf[33] = 0x0;		/* ZERO */
+	buf[34] = 0x00;		/* start position of lead-out*/
+	buf[35] = 0x13;
+	buf[36] = 0x11;
+
+	return 37;
+}
+#endif
 
 static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 {
@@ -1275,7 +1658,13 @@ static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 		buf += 4;
 		limit = 255;
 	} else {			/* MODE_SENSE_10 */
+
+#if defined(CONFIG_USB_MAC)
+		buf[3] = 0x00;		/* WP, DPOFUA */
+#else
 		buf[3] = (curlun->ro ? 0x80 : 0x00);		/* WP, DPOFUA */
+#endif
+
 		buf += 8;
 		limit = 65535;		/* Should really be FSG_BUFLEN */
 	}
@@ -1286,6 +1675,10 @@ static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 	 * The mode pages, in numerical order.  The only page we support
 	 * is the Caching page.
 	 */
+
+#if defined(CONFIG_USB_MAC)
+	valid_page = 1;
+#else
 	if (page_code == 0x08 || all_pages) {
 		valid_page = 1;
 		buf[0] = 0x08;		/* Page code */
@@ -1306,6 +1699,7 @@ static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 		}
 		buf += 12;
 	}
+#endif
 
 	/*
 	 * Check that a valid page was requested and the mode data length
@@ -1966,15 +2360,35 @@ static int do_scsi_command(struct fsg_common *common)
 		break;
 
 	case READ_TOC:
+
+#if defined(CONFIG_USB_MAC)
+#else
 		if (!common->curlun || !common->curlun->cdrom)
 			goto unknown_cmnd;
+#endif
+
 		common->data_size_from_cmnd =
 			get_unaligned_be16(&common->cmnd[7]);
 		reply = check_command(common, 10, DATA_DIR_TO_HOST,
+#if defined(CONFIG_USB_MAC)
+						(0xf<<6) | (3<<1), 1,
+#else
 				      (7<<6) | (1<<1), 1,
+#endif
 				      "READ TOC");
 		if (reply == 0)
 			reply = do_read_toc(common, bh);
+
+#ifndef CONFIG_USB_MAC
+		else {
+			if (common->curlun->sense_data ==
+			    SS_INVALID_FIELD_IN_CDB) {
+				reply = do_read_toc_mac(common, bh);
+				common->curlun->sense_data = SS_NO_SENSE;
+			}
+		}
+#endif
+
 		break;
 
 	case READ_FORMAT_CAPACITIES:
@@ -2067,6 +2481,16 @@ static int do_scsi_command(struct fsg_common *common)
 			reply = do_write(common);
 		break;
 
+#if defined(CONFIG_USB_MAC)
+	case SC_GET_CONFIGRATION:
+		common->data_size_from_cmnd =
+				get_unaligned_be16(&common->cmnd[7]);
+		reply = check_command(common, 10, DATA_DIR_TO_HOST, (3<<2)|(3<<7)|(1<<1), 0, "GET CONFIGURATION");
+		if (reply == 0)
+			reply = do_get_configuration(common, bh);
+		break;
+#endif
+
 	/*
 	 * Some mandatory commands that we recognize but don't implement.
 	 * They don't mean much in this setting.  It's left as an exercise
@@ -2077,6 +2501,9 @@ static int do_scsi_command(struct fsg_common *common)
 	case RELEASE:
 	case RESERVE:
 	case SEND_DIAGNOSTIC:
+#if defined(CONFIG_USB_MAC)
+	case SC_SET_CD_SPEED:
+#endif
 		/* Fall through */
 
 	default:
@@ -2502,7 +2929,6 @@ static void handle_exception(struct fsg_common *common)
 static int fsg_main_thread(void *common_)
 {
 	struct fsg_common	*common = common_;
-	int			i;
 
 	/*
 	 * Allow the thread to be killed by a signal, but set the signal mask
@@ -2564,16 +2990,21 @@ static int fsg_main_thread(void *common_)
 	common->thread_task = NULL;
 	spin_unlock_irq(&common->lock);
 
-	/* Eject media from all LUNs */
+	if (!common->ops || !common->ops->thread_exits
+	 || common->ops->thread_exits(common) < 0) {
+		int i;
 
-	down_write(&common->filesem);
-	for (i = 0; i < ARRAY_SIZE(common->luns); i++) {
-		struct fsg_lun *curlun = common->luns[i];
+		down_write(&common->filesem);
+		for (i = 0; i < ARRAY_SIZE(common->luns); --i) {
+			struct fsg_lun *curlun = common->luns[i];
+			if (!curlun || !fsg_lun_is_open(curlun))
+				continue;
 
-		if (curlun && fsg_lun_is_open(curlun))
 			fsg_lun_close(curlun);
+			curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+		}
+		up_write(&common->filesem);
 	}
-	up_write(&common->filesem);
 
 	/* Let fsg_unbind() know the thread has exited */
 	complete_and_exit(&common->thread_notifier, 0);
@@ -2779,6 +3210,13 @@ void fsg_common_remove_luns(struct fsg_common *common)
 }
 EXPORT_SYMBOL_GPL(fsg_common_remove_luns);
 
+void fsg_common_set_ops(struct fsg_common *common,
+			const struct fsg_operations *ops)
+{
+	common->ops = ops;
+}
+EXPORT_SYMBOL_GPL(fsg_common_set_ops);
+
 void fsg_common_free_buffers(struct fsg_common *common)
 {
 	_fsg_common_free_buffers(common->buffhds, common->fsg_num_buffers);
@@ -2973,6 +3411,25 @@ void fsg_common_set_inquiry_string(struct fsg_common *common, const char *vn,
 }
 EXPORT_SYMBOL_GPL(fsg_common_set_inquiry_string);
 
+int fsg_common_run_thread(struct fsg_common *common)
+{
+	common->state = FSG_STATE_IDLE;
+	/* Tell the thread to start working */
+	common->thread_task =
+		kthread_create(fsg_main_thread, common, "file-storage");
+	if (IS_ERR(common->thread_task)) {
+		common->state = FSG_STATE_TERMINATED;
+		return PTR_ERR(common->thread_task);
+	}
+
+	DBG(common, "I/O thread pid: %d\n", task_pid_nr(common->thread_task));
+
+	wake_up_process(common->thread_task);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(fsg_common_run_thread);
+
 static void fsg_common_release(struct kref *ref)
 {
 	struct fsg_common *common = container_of(ref, struct fsg_common, ref);
@@ -2982,7 +3439,6 @@ static void fsg_common_release(struct kref *ref)
 	if (common->state != FSG_STATE_TERMINATED) {
 		raise_exception(common, FSG_STATE_EXIT);
 		wait_for_completion(&common->thread_notifier);
-		common->thread_task = NULL;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(common->luns); ++i) {
@@ -3028,21 +3484,9 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 		if (ret)
 			return ret;
 		fsg_common_set_inquiry_string(fsg->common, NULL, NULL);
-	}
-
-	if (!common->thread_task) {
-		common->state = FSG_STATE_IDLE;
-		common->thread_task =
-			kthread_create(fsg_main_thread, common, "file-storage");
-		if (IS_ERR(common->thread_task)) {
-			int ret = PTR_ERR(common->thread_task);
-			common->thread_task = NULL;
-			common->state = FSG_STATE_TERMINATED;
+		ret = fsg_common_run_thread(fsg->common);
+		if (ret)
 			return ret;
-		}
-		DBG(common, "I/O thread pid: %d\n",
-		    task_pid_nr(common->thread_task));
-		wake_up_process(common->thread_task);
 	}
 
 	fsg->gadget = gadget;
@@ -3114,6 +3558,11 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 		raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
 		/* FIXME: make interruptible or killable somehow? */
 		wait_event(common->fsg_wait, common->fsg != fsg);
+	}
+	/* terminate the thread */
+	if (fsg->common->state != FSG_STATE_TERMINATED) {
+		raise_exception(fsg->common, FSG_STATE_EXIT);
+		wait_for_completion(&fsg->common->thread_notifier);
 	}
 
 	usb_free_all_descriptors(&fsg->function);

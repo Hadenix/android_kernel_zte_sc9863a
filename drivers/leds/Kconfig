@@ -605,6 +605,27 @@ config LEDS_VERSATILE
 	  This option enabled support for the LEDs on the ARM Versatile
 	  and RealView boards. Say Y to enabled these.
 
+config LEDS_SPRD_KPLED
+   tristate "LED Support for SPRD_KPLED"
+   depends on LEDS_CLASS
+   default n
+   help
+     This option enables support.
+
+config LEDS_SPRD_BLTC_RGB
+	tristate "LED Support for SPRD_BLTC_RGB_LED"
+	depends on LEDS_CLASS
+	default n
+	help
+	  This option enables support.
+
+config LEDS_SPRD_GPIO_RGB
+	tristate "LED Support for SPRD_GPIO_RGB_LED"
+	depends on LEDS_CLASS
+	default n
+	help
+	  This option enables support.
+
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"
 

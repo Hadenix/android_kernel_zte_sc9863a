@@ -353,9 +353,47 @@ config INT340X_THERMAL
 	  information to allow the user to select his laptop to run without
 	  turning on the fans.
 
+config SPRD_CPU_COOLING
+	bool "sprd cpu cooling devices"
+	depends on THERMAL
+	depends on !CPU_THERMAL
+	help
+	  Choose sprd cpu cooling devices.these cooling devices can be bound to
+	  thermal zone trip points. When a trip point reached, the bound cpufreq
+	  cooling device turns active to set CPU frequency low to cool down the CPU.
+
+config SPRD_CPU_COOLING_DEVICE
+	bool "sprd cpu cooling device"
+	depends on THERMAL
+	depends on CPU_THERMAL
+	help
+	  Say Y here to create cpu cooling device node and build power model for IPA.
+	  The sprd cooling devices can be bound to thermal zone trip points. When a
+	  trip point reached, the bound cpufreq cooling device turns active to set
+	  CPU frequency low to cool down the CPU.
+
+config SPRD_GPU_COOLING_DEVICE
+	bool "sprd gpu cooling device"
+	depends on THERMAL
+	depends on DEVFREQ_THERMAL
+	help
+	  Say Y here to create gpu cooling device node and build power model for IPA.
+	  The sprd cooling devices can be bound to thermal zone trip points. When a
+	  trip point reached, the bound gpufreq cooling device turns active to set
+	  GPU frequency low to cool down the GPU.
+
 config ACPI_THERMAL_REL
 	tristate
 	depends on ACPI
+
+config BIA_THERMAL
+	bool "BIA thermal"
+	depends on THERMAL
+	depends on THERMAL_OF
+	help
+	  baseia dts thermal driver.This driver manages the dts, which is
+	  outside the baseia. It configures the threshold and registers
+	  thermal interrupt. It's a very minimal driver.
 
 config INTEL_PCH_THERMAL
 	tristate "Intel PCH Thermal Reporting Driver"
@@ -364,6 +402,56 @@ config INTEL_PCH_THERMAL
 	  Enable this to support thermal reporting on certain intel PCHs.
 	  Thermal reporting device will provide temperature reading,
 	  programmable trip points and other information.
+
+config SPRD_THERMAL
+	bool "sprd thermal"
+	depends on THERMAL
+	help
+	  Use the sprd thermal system.
+
+config SPRD_THERMAL_MULT
+	bool "thermal mult"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Say Y here to support spreadtrum ap thermal.
+
+config SPRD_THERMAL_DEDICATE
+        bool "thermal dedicate"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Use the ap0 thermal system.
+	  Say Y here to support spreadtrum ap thermal.
+
+config SPRD_PMIC_THERMAL
+        bool "pmic thermal"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Say Y here to support spreadtrum pmic thermal.
+
+config SPRD_ITHM
+	bool "sprd ithm"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Say Y here to support spreadtrum ap ithm.
+
+config SPRD_BOARD_THERMAL
+        bool "board thermal"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Say Y here to support spreadtrum board thermal.
+
+config SPRD_VIRT_THERMAL
+        bool "virt thermal"
+	depends on THERMAL
+	depends on SPRD_THERMAL
+	help
+	  Say Y here to support spreadtrum virtual thermal,
+	  we can get the max junction temperature between gpu and cpu.
 
 menu "Texas Instruments thermal drivers"
 depends on ARCH_HAS_BANDGAP || COMPILE_TEST

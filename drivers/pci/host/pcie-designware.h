@@ -14,6 +14,10 @@
 #ifndef _PCIE_DESIGNWARE_H
 #define _PCIE_DESIGNWARE_H
 
+#include <linux/irq.h>
+#include <linux/msi.h>
+#include <linux/pci.h>
+
 /*
  * Maximum number of MSI IRQs can be 256 per controller. But keep
  * it 32 as of now. Probably we will never need more than 32. If needed,
@@ -48,6 +52,7 @@ struct pcie_port {
 	int			msi_irq;
 	struct irq_domain	*irq_domain;
 	unsigned long		msi_data;
+	u8			iatu_unroll_enabled;
 	DECLARE_BITMAP(msi_irq_in_use, MAX_MSI_IRQS);
 };
 
@@ -79,5 +84,7 @@ void dw_pcie_msi_init(struct pcie_port *pp);
 int dw_pcie_link_up(struct pcie_port *pp);
 void dw_pcie_setup_rc(struct pcie_port *pp);
 int dw_pcie_host_init(struct pcie_port *pp);
+void dw_pcie_dbi_ro_wr_en(struct pcie_port *pp);
+void dw_pcie_dbi_ro_wr_dis(struct pcie_port *pp);
 
 #endif /* _PCIE_DESIGNWARE_H */

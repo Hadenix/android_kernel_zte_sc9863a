@@ -1201,13 +1201,12 @@ static int __clk_set_parent(struct clk_core *core, struct clk_core *parent,
 
 	old_parent = __clk_set_parent_before(core, parent);
 
-	trace_clk_set_parent(core, parent);
-
 	/* change clock input source */
-	if (parent && core->ops->set_parent)
+	if (parent && core->ops->set_parent) {
+		trace_clk_set_parent(core, parent);
 		ret = core->ops->set_parent(core->hw, p_index);
-
-	trace_clk_set_parent_complete(core, parent);
+		trace_clk_set_parent_complete(core, parent);
+	}
 
 	if (ret) {
 		flags = clk_enable_lock();

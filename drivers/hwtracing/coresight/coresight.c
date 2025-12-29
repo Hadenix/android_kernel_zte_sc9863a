@@ -511,12 +511,24 @@ static int coresight_orphan_match(struct device *dev, void *data)
 		/* We have found at least one orphan connection */
 		if (conn->child_dev == NULL) {
 			/* Does it match this newly added device? */
-			if (!strcmp(dev_name(&csdev->dev), conn->child_name)) {
+			if (!strcmp(dev_name(&csdev->dev), conn->child_name))
 				conn->child_dev = csdev;
-			} else {
+			else
 				/* This component still has an orphan */
 				still_orphan = true;
-			}
+		}
+	}
+	for (i = 0; i < i_csdev->nr_inport; i++) {
+		conn = &i_csdev->conns[i + i_csdev->nr_outport];
+
+		/* We have found at least one orphan connection */
+		if (conn->parent_dev == NULL) {
+			/* Does it match this newly added device? */
+			if (!strcmp(dev_name(&csdev->dev), conn->parent_name))
+				conn->parent_dev = csdev;
+			else
+				/* This component still has an orphan */
+				still_orphan = true;
 		}
 	}
 
@@ -548,7 +560,7 @@ static int coresight_name_match(struct device *dev, void *data)
 	to_match = data;
 	i_csdev = to_coresight_device(dev);
 
-	if (to_match && !strcmp(to_match, dev_name(&i_csdev->dev)))
+	if (!strcmp(to_match, dev_name(&i_csdev->dev)))
 		return 1;
 
 	return 0;
@@ -560,17 +572,28 @@ static void coresight_fixup_device_conns(struct coresight_device *csdev)
 	struct device *dev = NULL;
 	struct coresight_connection *conn;
 
-	for (i = 0; i < csdev->nr_outport; i++) {
+	for (i = 0; i < csdev->nr_outport + csdev->nr_inport; i++) {
 		conn = &csdev->conns[i];
-		dev = bus_find_device(&coresight_bustype, NULL,
-				      (void *)conn->child_name,
-				      coresight_name_match);
-
-		if (dev) {
-			conn->child_dev = to_coresight_device(dev);
+		if (i < csdev->nr_outport) {
+			dev = bus_find_device(&coresight_bustype, NULL,
+						  (void *)conn->child_name,
+						  coresight_name_match);
+			if (dev) {
+				conn->child_dev = to_coresight_device(dev);
+			} else {
+				csdev->orphan = true;
+				conn->child_dev = NULL;
+			}
 		} else {
-			csdev->orphan = true;
-			conn->child_dev = NULL;
+			dev = bus_find_device(&coresight_bustype, NULL,
+						  (void *)conn->parent_name,
+						  coresight_name_match);
+			if (dev) {
+				conn->parent_dev = to_coresight_device(dev);
+			} else {
+				csdev->orphan = true;
+				conn->parent_dev = NULL;
+			}
 		}
 	}
 }
@@ -661,16 +684,23 @@ struct coresight_device *coresight_register(struct coresight_desc *desc)
 
 	csdev->nr_inport = desc->pdata->nr_inport;
 	csdev->nr_outport = desc->pdata->nr_outport;
-	conns = kcalloc(csdev->nr_outport, sizeof(*conns), GFP_KERNEL);
+	conns = kcalloc(csdev->nr_outport + csdev->nr_inport,
+		sizeof(*conns), GFP_KERNEL);
 	if (!conns) {
 		ret = -ENOMEM;
 		goto err_kzalloc_conns;
 	}
 
-	for (i = 0; i < csdev->nr_outport; i++) {
-		conns[i].outport = desc->pdata->outports[i];
-		conns[i].child_name = desc->pdata->child_names[i];
-		conns[i].child_port = desc->pdata->child_ports[i];
+	for (i = 0; i < csdev->nr_outport + csdev->nr_inport; i++) {
+		if (i < csdev->nr_outport) {
+			conns[i].outport = desc->pdata->outports[i];
+			conns[i].child_name = desc->pdata->child_names[i];
+			conns[i].child_port = desc->pdata->child_ports[i];
+		} else {
+			conns[i].inport = desc->pdata->inports[i];
+			conns[i].parent_name = desc->pdata->parent_names[i];
+			conns[i].parent_port = desc->pdata->parent_ports[i];
+		}
 	}
 
 	csdev->conns = conns;
@@ -679,6 +709,7 @@ struct coresight_device *coresight_register(struct coresight_desc *desc)
 	csdev->subtype = desc->subtype;
 	csdev->ops = desc->ops;
 	csdev->orphan = false;
+	csdev->cpu = desc->pdata->cpu;
 
 	csdev->dev.type = &coresight_dev_type[desc->type];
 	csdev->dev.groups = desc->groups;

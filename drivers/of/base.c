@@ -1919,8 +1919,10 @@ void of_alias_scan(void * (*dt_alloc)(u64 size, u64 align))
 			name = of_get_property(of_chosen, "linux,stdout-path", NULL);
 		if (IS_ENABLED(CONFIG_PPC) && !name)
 			name = of_get_property(of_aliases, "stdout", NULL);
-		if (name)
-			of_stdout = of_find_node_opts_by_path(name, &of_stdout_options);
+		if (name) {
+			of_stdout = of_find_node_by_path(name);
+			add_preferred_console("stdout-path", 0, NULL);
+		}
 	}
 
 	if (!of_aliases)

@@ -531,6 +531,19 @@ config SPI_SIRF
 	help
 	  SPI driver for CSR SiRFprimaII SoCs
 
+config SPI_SPRD
+	tristate "Spreadtrum SPI controller"
+	select SPI_BITBANG
+	depends on ARCH_SPRD
+	help
+	  SPI driver for spreadtrum SoCs.
+
+config SPI_SPRD_ADI
+	tristate "Spreadtrum ADI controller based on SPI"
+	select SPI_BITBANG
+	help
+	  ADI master controller for spreadtrum soc.
+
 config SPI_ST_SSC4
 	tristate "STMicroelectronics SPI SSC-based driver"
 	depends on ARCH_STI

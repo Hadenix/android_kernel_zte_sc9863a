@@ -53,6 +53,15 @@ of_coresight_get_endpoint_device(struct device_node *endpoint)
 			       endpoint, of_dev_node_match);
 }
 
+static struct device_node *of_get_coresight_endpoint(
+		const struct device_node *parent, struct device_node *prev)
+{
+	struct device_node *node = of_graph_get_next_endpoint(parent, prev);
+
+	of_node_put(prev);
+	return node;
+}
+
 static void of_coresight_get_ports(struct device_node *node,
 				   int *nr_inport, int *nr_outport)
 {
@@ -60,7 +69,7 @@ static void of_coresight_get_ports(struct device_node *node,
 	int in = 0, out = 0;
 
 	do {
-		ep = of_graph_get_next_endpoint(node, ep);
+		ep = of_get_coresight_endpoint(node, ep);
 		if (!ep)
 			break;
 
@@ -99,6 +108,27 @@ static int of_coresight_alloc_memory(struct device *dev,
 	if (!pdata->child_ports)
 		return -ENOMEM;
 
+	/* List of input port on this component */
+	pdata->inports = devm_kzalloc(dev, pdata->nr_inport *
+				       sizeof(*pdata->inports),
+				       GFP_KERNEL);
+	if (!pdata->inports)
+		return -ENOMEM;
+
+	/* Parents connected to this component via @inports */
+	 pdata->parent_names = devm_kzalloc(dev, pdata->nr_inport *
+					  sizeof(*pdata->parent_names),
+					  GFP_KERNEL);
+	if (!pdata->parent_names)
+		return -ENOMEM;
+
+	/* Port number on the parent this component is connected to */
+	pdata->parent_ports = devm_kzalloc(dev, pdata->nr_inport *
+					  sizeof(*pdata->parent_ports),
+					  GFP_KERNEL);
+	if (!pdata->parent_ports)
+		return -ENOMEM;
+
 	return 0;
 }
 
@@ -124,7 +154,7 @@ struct coresight_platform_data *of_get_coresight_platform_data(
 	/* Get the number of input and output port for this component */
 	of_coresight_get_ports(node, &pdata->nr_inport, &pdata->nr_outport);
 
-	if (pdata->nr_outport) {
+	if (pdata->nr_outport || pdata->nr_inport) {
 		ret = of_coresight_alloc_memory(dev, pdata);
 		if (ret)
 			return ERR_PTR(ret);
@@ -132,16 +162,9 @@ struct coresight_platform_data *of_get_coresight_platform_data(
 		/* Iterate through each port to discover topology */
 		do {
 			/* Get a handle on a port */
-			ep = of_graph_get_next_endpoint(node, ep);
+			ep = of_get_coresight_endpoint(node, ep);
 			if (!ep)
 				break;
-
-			/*
-			 * No need to deal with input ports, processing for as
-			 * processing for output ports will deal with them.
-			 */
-			if (of_find_property(ep, "slave-mode", NULL))
-				continue;
 
 			/* Get a handle on the local endpoint */
 			ret = of_graph_parse_endpoint(ep, &endpoint);
@@ -169,9 +192,17 @@ struct coresight_platform_data *of_get_coresight_platform_data(
 			if (!rdev)
 				continue;
 
-			pdata->child_names[i] = dev_name(rdev);
-			pdata->child_ports[i] = rendpoint.id;
-
+			if (of_find_property(ep, "slave-mode", NULL)) {
+				/* The local in port number */
+				pdata->inports[i] = endpoint.id;
+				pdata->parent_names[i] = dev_name(rdev);
+				pdata->parent_ports[i] = rendpoint.id;
+			} else {
+				/* The local out port number */
+				pdata->outports[i] = endpoint.id;
+				pdata->child_names[i] = dev_name(rdev);
+				pdata->child_ports[i] = rendpoint.id;
+			}
 			i++;
 		} while (ep);
 	}

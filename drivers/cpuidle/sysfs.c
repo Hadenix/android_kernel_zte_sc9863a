@@ -292,6 +292,22 @@ static ssize_t show_state_##_name(struct cpuidle_state *state, \
 	return sprintf(buf, "%s\n", state->_name);\
 }
 
+static ssize_t store_state_target_residency(struct cpuidle_state *state,
+						struct cpuidle_state_usage *state_usage,
+						const char *buf, size_t size)
+{
+	unsigned long long value;
+	int err;
+
+	err = kstrtoull(buf, 0, &value);
+	if (err)
+		return err;
+	if (value)
+		state->target_residency = value;
+
+	return size;
+}
+
 define_show_state_function(exit_latency)
 define_show_state_function(target_residency)
 define_show_state_function(power_usage)
@@ -305,7 +321,7 @@ define_store_state_ull_function(disable)
 define_one_state_ro(name, show_state_name);
 define_one_state_ro(desc, show_state_desc);
 define_one_state_ro(latency, show_state_exit_latency);
-define_one_state_ro(residency, show_state_target_residency);
+define_one_state_rw(residency, show_state_target_residency, store_state_target_residency);
 define_one_state_ro(power, show_state_power_usage);
 define_one_state_ro(usage, show_state_usage);
 define_one_state_ro(time, show_state_time);
