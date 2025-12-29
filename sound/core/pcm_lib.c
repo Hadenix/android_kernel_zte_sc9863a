@@ -21,6 +21,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/sipc.h>
 #include <linux/time.h>
 #include <linux/math64.h>
 #include <linux/export.h>
@@ -1916,7 +1917,7 @@ static int wait_for_avail(struct snd_pcm_substream *substream,
 	if (runtime->no_period_wakeup)
 		wait_time = MAX_SCHEDULE_TIMEOUT;
 	else {
-		wait_time = 10;
+		wait_time = 2;
 		if (runtime->rate) {
 			long t = runtime->period_size * 2 / runtime->rate;
 			wait_time = max(t, wait_time);
@@ -1998,7 +1999,8 @@ static int snd_pcm_lib_write_transfer(struct snd_pcm_substream *substream,
 			return err;
 	} else {
 		char *hwbuf = runtime->dma_area + frames_to_bytes(runtime, hwoff);
-		if (copy_from_user(hwbuf, buf, frames_to_bytes(runtime, frames)))
+		if (unalign_copy_from_user(hwbuf, buf,
+				frames_to_bytes(runtime, frames)))
 			return -EFAULT;
 	}
 	return 0;
@@ -2177,7 +2179,10 @@ static int snd_pcm_lib_writev_transfer(struct snd_pcm_substream *substream,
 				snd_pcm_format_set_silence(runtime->format, hwbuf, frames);
 			} else {
 				char __user *buf = *bufs + samples_to_bytes(runtime, off);
-				if (copy_from_user(hwbuf, buf, samples_to_bytes(runtime, frames)))
+				if (unalign_copy_from_user(
+					hwbuf, buf,
+					samples_to_bytes(runtime,
+					frames)))
 					return -EFAULT;
 			}
 		}
@@ -2220,7 +2225,8 @@ static int snd_pcm_lib_read_transfer(struct snd_pcm_substream *substream,
 			return err;
 	} else {
 		char *hwbuf = runtime->dma_area + frames_to_bytes(runtime, hwoff);
-		if (copy_to_user(buf, hwbuf, frames_to_bytes(runtime, frames)))
+		if (unalign_copy_to_user(buf, hwbuf,
+				frames_to_bytes(runtime, frames)))
 			return -EFAULT;
 	}
 	return 0;
@@ -2383,7 +2389,8 @@ static int snd_pcm_lib_readv_transfer(struct snd_pcm_substream *substream,
 
 			hwbuf = runtime->dma_area + (c * dma_csize) + samples_to_bytes(runtime, hwoff);
 			buf = *bufs + samples_to_bytes(runtime, off);
-			if (copy_to_user(buf, hwbuf, samples_to_bytes(runtime, frames)))
+			if (unalign_copy_to_user(buf, hwbuf,
+					samples_to_bytes(runtime, frames)))
 				return -EFAULT;
 		}
 	}

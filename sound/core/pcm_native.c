@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/file.h>
 #include <linux/slab.h>
+#include <linux/sipc.h>
 #include <linux/time.h>
 #include <linux/pm_qos.h>
 #include <linux/io.h>
@@ -232,7 +233,7 @@ int snd_pcm_info_user(struct snd_pcm_substream *substream,
 		return -ENOMEM;
 	err = snd_pcm_info(substream, info);
 	if (err >= 0) {
-		if (copy_to_user(_info, info, sizeof(*info)))
+		if (unalign_copy_to_user(_info, info, sizeof(*info)))
 			err = -EFAULT;
 	}
 	kfree(info);
@@ -466,7 +467,7 @@ static int snd_pcm_hw_refine_user(struct snd_pcm_substream *substream,
 		return PTR_ERR(params);
 
 	err = snd_pcm_hw_refine(substream, params);
-	if (copy_to_user(_params, params, sizeof(*params))) {
+	if (unalign_copy_to_user(_params, params, sizeof(*params))) {
 		if (!err)
 			err = -EFAULT;
 	}
@@ -620,7 +621,7 @@ static int snd_pcm_hw_params_user(struct snd_pcm_substream *substream,
 		return PTR_ERR(params);
 
 	err = snd_pcm_hw_params(substream, params);
-	if (copy_to_user(_params, params, sizeof(*params))) {
+	if (unalign_copy_to_user(_params, params, sizeof(*params))) {
 		if (!err)
 			err = -EFAULT;
 	}
@@ -716,10 +717,10 @@ static int snd_pcm_sw_params_user(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_sw_params params;
 	int err;
-	if (copy_from_user(&params, _params, sizeof(params)))
+	if (unalign_copy_from_user(&params, _params, sizeof(params)))
 		return -EFAULT;
 	err = snd_pcm_sw_params(substream, &params);
-	if (copy_to_user(_params, &params, sizeof(params)))
+	if (unalign_copy_to_user(_params, &params, sizeof(params)))
 		return -EFAULT;
 	return err;
 }
@@ -818,7 +819,7 @@ static int snd_pcm_status_user(struct snd_pcm_substream *substream,
 	res = snd_pcm_status(substream, &status);
 	if (res < 0)
 		return res;
-	if (copy_to_user(_status, &status, sizeof(status)))
+	if (unalign_copy_to_user(_status, &status, sizeof(status)))
 		return -EFAULT;
 	return 0;
 }
@@ -850,12 +851,12 @@ static int snd_pcm_channel_info_user(struct snd_pcm_substream *substream,
 	struct snd_pcm_channel_info info;
 	int res;
 	
-	if (copy_from_user(&info, _info, sizeof(info)))
+	if (unalign_copy_from_user(&info, _info, sizeof(info)))
 		return -EFAULT;
 	res = snd_pcm_channel_info(substream, &info);
 	if (res < 0)
 		return res;
-	if (copy_to_user(_info, &info, sizeof(info)))
+	if (unalign_copy_to_user(_info, &info, sizeof(info)))
 		return -EFAULT;
 	return 0;
 }
@@ -2705,7 +2706,9 @@ static int snd_pcm_sync_ptr(struct snd_pcm_substream *substream,
 	memset(&sync_ptr, 0, sizeof(sync_ptr));
 	if (get_user(sync_ptr.flags, (unsigned __user *)&(_sync_ptr->flags)))
 		return -EFAULT;
-	if (copy_from_user(&sync_ptr.c.control, &(_sync_ptr->c.control), sizeof(struct snd_pcm_mmap_control)))
+	if (unalign_copy_from_user(&sync_ptr.c.control,
+			&(_sync_ptr->c.control),
+			sizeof(struct snd_pcm_mmap_control)))
 		return -EFAULT;	
 	status = runtime->status;
 	control = runtime->control;
@@ -2729,7 +2732,7 @@ static int snd_pcm_sync_ptr(struct snd_pcm_substream *substream,
 	sync_ptr.s.status.suspended_state = status->suspended_state;
 	sync_ptr.s.status.audio_tstamp = status->audio_tstamp;
 	snd_pcm_stream_unlock_irq(substream);
-	if (copy_to_user(_sync_ptr, &sync_ptr, sizeof(sync_ptr)))
+	if (unalign_copy_to_user(_sync_ptr, &sync_ptr, sizeof(sync_ptr)))
 		return -EFAULT;
 	return 0;
 }
@@ -2836,7 +2839,7 @@ static int snd_pcm_playback_ioctl1(struct file *file,
 			return -EBADFD;
 		if (put_user(0, &_xferi->result))
 			return -EFAULT;
-		if (copy_from_user(&xferi, _xferi, sizeof(xferi)))
+		if (unalign_copy_from_user(&xferi, _xferi, sizeof(xferi)))
 			return -EFAULT;
 		result = snd_pcm_lib_write(substream, xferi.buf, xferi.frames);
 		__put_user(result, &_xferi->result);
@@ -2855,7 +2858,7 @@ static int snd_pcm_playback_ioctl1(struct file *file,
 			return -EINVAL;
 		if (put_user(0, &_xfern->result))
 			return -EFAULT;
-		if (copy_from_user(&xfern, _xfern, sizeof(xfern)))
+		if (unalign_copy_from_user(&xfern, _xfern, sizeof(xfern)))
 			return -EFAULT;
 
 		bufs = memdup_user(xfern.bufs,
@@ -2916,7 +2919,7 @@ static int snd_pcm_capture_ioctl1(struct file *file,
 			return -EBADFD;
 		if (put_user(0, &_xferi->result))
 			return -EFAULT;
-		if (copy_from_user(&xferi, _xferi, sizeof(xferi)))
+		if (unalign_copy_from_user(&xferi, _xferi, sizeof(xferi)))
 			return -EFAULT;
 		result = snd_pcm_lib_read(substream, xferi.buf, xferi.frames);
 		__put_user(result, &_xferi->result);
@@ -2935,7 +2938,7 @@ static int snd_pcm_capture_ioctl1(struct file *file,
 			return -EINVAL;
 		if (put_user(0, &_xfern->result))
 			return -EFAULT;
-		if (copy_from_user(&xfern, _xfern, sizeof(xfern)))
+		if (unalign_copy_from_user(&xfern, _xfern, sizeof(xfern)))
 			return -EFAULT;
 
 		bufs = memdup_user(xfern.bufs,
@@ -3605,7 +3608,7 @@ static int snd_pcm_hw_refine_old_user(struct snd_pcm_substream *substream,
 	snd_pcm_hw_convert_from_old_params(params, oparams);
 	err = snd_pcm_hw_refine(substream, params);
 	snd_pcm_hw_convert_to_old_params(oparams, params);
-	if (copy_to_user(_oparams, oparams, sizeof(*oparams))) {
+	if (unalign_copy_to_user(_oparams, oparams, sizeof(*oparams))) {
 		if (!err)
 			err = -EFAULT;
 	}
@@ -3635,7 +3638,7 @@ static int snd_pcm_hw_params_old_user(struct snd_pcm_substream *substream,
 	snd_pcm_hw_convert_from_old_params(params, oparams);
 	err = snd_pcm_hw_params(substream, params);
 	snd_pcm_hw_convert_to_old_params(oparams, params);
-	if (copy_to_user(_oparams, oparams, sizeof(*oparams))) {
+	if (unalign_copy_to_user(_oparams, oparams, sizeof(*oparams))) {
 		if (!err)
 			err = -EFAULT;
 	}
