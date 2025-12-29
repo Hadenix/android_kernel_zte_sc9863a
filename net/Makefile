@@ -77,3 +77,5 @@ endif
 ifneq ($(CONFIG_NET_L3_MASTER_DEV),)
 obj-y				+= l3mdev/
 endif
+
+obj-$(CONFIG_SPRD_IMS_BRIDGE)	+= ims_bridge/

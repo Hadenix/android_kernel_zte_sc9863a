@@ -740,6 +740,7 @@ config NETFILTER_XT_TARGET_HMARK
 config NETFILTER_XT_TARGET_IDLETIMER
 	tristate  "IDLETIMER target support"
 	depends on NETFILTER_ADVANCED
+	default y
 	help
 
 	  This option adds the `IDLETIMER' target.  Each matching packet

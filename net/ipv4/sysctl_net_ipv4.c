@@ -25,6 +25,7 @@
 #include <net/inet_frag.h>
 #include <net/ping.h>
 #include <net/tcp_memcontrol.h>
+#include <linux/inet.h>
 
 static int zero;
 static int one = 1;
@@ -43,6 +44,7 @@ static int tcp_syn_retries_max = MAX_TCP_SYNCNT;
 static int ip_ping_group_range_min[] = { 0, 0 };
 static int ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
 
+char ip_addr_pc[INET_ADDRSTRLEN];
 /* Update system visible IP port range */
 static void set_local_port_range(struct net *net, int range[2])
 {
@@ -751,6 +753,15 @@ static struct ctl_table ipv4_table[] = {
 		.extra2		= &gso_max_segs,
 	},
 	{
+		.procname	= "tcp_enable_nuke_addr",
+		.data		= &sysctl_tcp_enable_nuke_addr,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
+	{
 		.procname	= "tcp_pacing_ss_ratio",
 		.data		= &sysctl_tcp_pacing_ss_ratio,
 		.maxlen		= sizeof(int),
@@ -980,6 +991,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "ip_addr_pc",
+		.data		= ip_addr_pc,
+		.maxlen		= INET_ADDRSTRLEN,
+		.mode		= 0644,
+		.proc_handler	= proc_dostring,
 	},
 	{ }
 };
