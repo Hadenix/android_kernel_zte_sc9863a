@@ -1782,8 +1782,8 @@ static int validate_prctl_map(struct prctl_mm_map *prctl_map)
 	/*
 	 * @brk should be after @end_data in traditional maps.
 	 */
-	if (prctl_map->start_brk <= prctl_map->end_data ||
-	    prctl_map->brk <= prctl_map->end_data)
+	if (prctl_map->start_brk < prctl_map->end_data ||
+	    prctl_map->brk < prctl_map->end_data)
 		goto out;
 
 	/*

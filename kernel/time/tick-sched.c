@@ -886,6 +886,19 @@ ktime_t tick_nohz_get_sleep_length(void)
 }
 
 /**
+ * tick_nohz_get_idle_calls_cpu - return the current idle calls counter value
+ * for a particular CPU.
+ *
+ * Called from the schedutil frequency scaling governor in scheduler context.
+ */
+unsigned long tick_nohz_get_idle_calls_cpu(int cpu)
+{
+	struct tick_sched *ts = tick_get_tick_sched(cpu);
+
+	return ts->idle_calls;
+}
+
+/**
  * tick_nohz_get_idle_calls - return the current idle calls counter value
  *
  * Called from the schedutil frequency scaling governor in scheduler context.
@@ -1104,6 +1117,16 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 
 	return HRTIMER_RESTART;
 }
+
+#ifdef CONFIG_SPRD_EIRQSOFF
+bool is_tick_sched_timer(void *fn)
+{
+	if (fn == tick_sched_timer)
+		return true;
+	return false;
+}
+EXPORT_SYMBOL_GPL(is_tick_sched_timer);
+#endif
 
 static int sched_skew_tick;
 

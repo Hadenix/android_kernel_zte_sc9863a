@@ -32,10 +32,10 @@
 
 #define EXITING_TASK_MARKER	0xdeaddead
 
-static __read_mostly unsigned int walt_ravg_hist_size = 5;
+static __read_mostly unsigned int walt_ravg_hist_size = 6;
 static __read_mostly unsigned int walt_window_stats_policy =
-	WINDOW_STATS_MAX_RECENT_AVG;
-static __read_mostly unsigned int walt_account_wait_time = 1;
+	WINDOW_STATS_MAX;
+static __read_mostly unsigned int walt_account_wait_time;
 static __read_mostly unsigned int walt_freq_account_wait_time = 0;
 static __read_mostly unsigned int walt_io_is_busy = 0;
 
@@ -49,9 +49,11 @@ bool __read_mostly walt_disabled = false;
  * rollover occurs just before the tick boundary.
  */
 __read_mostly unsigned int walt_ravg_window =
-					    (20000000 / TICK_NSEC) * TICK_NSEC;
+					    (16000000 / TICK_NSEC) * TICK_NSEC;
 #define MIN_SCHED_RAVG_WINDOW ((10000000 / TICK_NSEC) * TICK_NSEC)
 #define MAX_SCHED_RAVG_WINDOW ((1000000000 / TICK_NSEC) * TICK_NSEC)
+
+unsigned int busy_threshold = 75;
 
 static unsigned int sync_cpu;
 static ktime_t ktime_last;
@@ -199,11 +201,12 @@ static int __init set_walt_ravg_window(char *str)
 
 early_param("walt_ravg_window", set_walt_ravg_window);
 
-static void
+static u64
 update_window_start(struct rq *rq, u64 wallclock)
 {
 	s64 delta;
 	int nr_windows;
+	u64 old_window_start = rq->window_start;
 
 	delta = wallclock - rq->window_start;
 	/* If the MPM global timer is cleared, set delta as 0 to avoid kernel BUG happening */
@@ -213,12 +216,14 @@ update_window_start(struct rq *rq, u64 wallclock)
 	}
 
 	if (delta < walt_ravg_window)
-		return;
+		return old_window_start;
 
 	nr_windows = div64_u64(delta, walt_ravg_window);
 	rq->window_start += (u64)nr_windows * (u64)walt_ravg_window;
 
 	rq->cum_window_demand = rq->cumulative_runnable_avg;
+
+	return old_window_start;
 }
 
 /*
@@ -713,6 +718,18 @@ static void update_task_demand(struct task_struct *p, struct rq *rq,
 		/* The simple case - busy time contained within the existing
 		 * window. */
 		add_to_task_demand(rq, p, wallclock - mark_start);
+		if (p->ravg.sum > p->ravg.demand &&
+		    walt_window_stats_policy == WINDOW_STATS_MAX) {
+			if (!task_has_dl_policy(p) || !p->dl.dl_throttled) {
+				if (task_on_rq_queued(p))
+					fixup_cumulative_runnable_avg(
+							rq, p, p->ravg.sum);
+				else if (rq->curr == p)
+					fixup_cum_window_demand(
+							rq, p->ravg.sum);
+			}
+			p->ravg.demand = p->ravg.sum;
+		}
 		return;
 	}
 
@@ -744,12 +761,14 @@ static void update_task_demand(struct task_struct *p, struct rq *rq,
 void walt_update_task_ravg(struct task_struct *p, struct rq *rq,
 	     int event, u64 wallclock, u64 irqtime)
 {
+	u64 old_window_start;
+
 	if (walt_disabled || !rq->window_start)
 		return;
 
 	lockdep_assert_held(&rq->lock);
 
-	update_window_start(rq, wallclock);
+	old_window_start = update_window_start(rq, wallclock);
 
 	if (!p->ravg.mark_start)
 		goto done;
@@ -758,6 +777,19 @@ void walt_update_task_ravg(struct task_struct *p, struct rq *rq,
 	update_cpu_busy_time(p, rq, event, wallclock, irqtime);
 
 done:
+	if (rq->window_start > old_window_start) {
+		unsigned int busy_limit =
+			(walt_ravg_window * busy_threshold) / 100;
+		if (rq->prev_runnable_sum >= busy_limit) {
+			if (rq->is_busy == CPU_BUSY_CLR)
+				rq->is_busy = CPU_BUSY_PREPARE;
+			else if (rq->is_busy == CPU_BUSY_PREPARE)
+				rq->is_busy = CPU_BUSY_SET;
+		} else if (rq->is_busy != CPU_BUSY_CLR) {
+			rq->is_busy = CPU_BUSY_CLR;
+		}
+	}
+
 	trace_walt_update_task_ravg(p, rq, event, wallclock, irqtime);
 
 	p->ravg.mark_start = wallclock;

@@ -19,6 +19,7 @@
 #include <linux/gfp.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
@@ -34,6 +35,9 @@
 
 #include "power.h"
 
+#define DEEP_SLEEP_RETRY_DIRTY_WRITEBACK_THRESHOLD     128     /* 128kB */
+#define DEEP_SLEEP_RETRY_TRIGGER_SYNC_QUEUE_THRESHOLD  2048    /* 2048kB */
+
 const char *pm_labels[] = { "mem", "standby", "freeze", NULL };
 const char *pm_states[PM_SUSPEND_MAX];
 
@@ -46,6 +50,10 @@ static DECLARE_WAIT_QUEUE_HEAD(suspend_freeze_wait_head);
 
 enum freeze_state __read_mostly suspend_freeze_state;
 static DEFINE_SPINLOCK(suspend_freeze_lock);
+
+static struct workqueue_struct *suspend_sys_sync_work_queue;
+static int sync_start;
+static DEFINE_SPINLOCK(suspend_sys_sync_lock);
 
 void freeze_set_ops(const struct platform_freeze_ops *ops)
 {
@@ -270,8 +278,16 @@ static int suspend_prepare(suspend_state_t state)
 {
 	int error, nr_calls = 0;
 
-	if (!sleep_state_supported(state))
+	if (!sleep_state_supported(state)) {
+#ifdef CONFIG_SPRD_CPU_HOTPLUG_GOV
+		/**
+		 * We should resume running dynamic cpu hotplug in case of
+		 * early exit
+		 */
+		__pm_notifier_call_chain(PM_SUSPEND_PREPARE_FAILED, -1, NULL);
+#endif
 		return -EPERM;
+	}
 
 	pm_prepare_console();
 
@@ -476,6 +492,32 @@ static void suspend_finish(void)
 	pm_restore_console();
 }
 
+static void suspend_sys_sync(struct work_struct *work)
+{
+	pr_info("PM: suspend sync-queue sync begin...\n");
+	sys_sync();
+	pr_info("PM: suspend sync-queue sync done\n");
+
+	spin_lock(&suspend_sys_sync_lock);
+	sync_start = 0;
+	spin_unlock(&suspend_sys_sync_lock);
+}
+static DECLARE_WORK(suspend_sys_sync_work, suspend_sys_sync);
+
+void suspend_sys_sync_queue(void)
+{
+	int ret;
+
+	spin_lock(&suspend_sys_sync_lock);
+	if (sync_start == 0) {
+		ret = queue_work(suspend_sys_sync_work_queue,
+					&suspend_sys_sync_work);
+		if (ret)
+			sync_start = 1;
+	}
+	spin_unlock(&suspend_sys_sync_lock);
+}
+
 /**
  * enter_state - Do common work needed to enter system sleep state.
  * @state: System sleep state to enter.
@@ -487,6 +529,7 @@ static void suspend_finish(void)
 static int enter_state(suspend_state_t state)
 {
 	int error;
+	unsigned long dirty;
 
 	trace_suspend_resume(TPS("suspend_enter"), state, true);
 	if (state == PM_SUSPEND_FREEZE) {
@@ -503,8 +546,37 @@ static int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
 
+	dirty = (global_page_state(NR_FILE_DIRTY)
+			+ global_page_state(NR_WRITEBACK)) << (PAGE_SHIFT - 10);
+	spin_lock(&suspend_sys_sync_lock);
+	if (sync_start == 1) {
+		spin_unlock(&suspend_sys_sync_lock);
+		error = -EBUSY;
+		pr_info("PM: suspend sync-queue syncing(%lu kB)...\n", dirty);
+		goto Unlock;
+	}
+	spin_unlock(&suspend_sys_sync_lock);
+	if (dirty > DEEP_SLEEP_RETRY_DIRTY_WRITEBACK_THRESHOLD) {
+		if (dirty < DEEP_SLEEP_RETRY_TRIGGER_SYNC_QUEUE_THRESHOLD)
+			suspend_sys_sync_queue();
+		error = -EBUSY;
+		pr_info("PM: dirty and writeback data is %lu kB, "
+			"it's too much for sys_sync, try again!\n", dirty);
+		goto Unlock;
+	}
+
 	if (state == PM_SUSPEND_FREEZE)
 		freeze_begin();
+
+#ifdef CONFIG_SPRD_CPU_HOTPLUG_GOV
+	/**
+	 * Stop sprd dynamic cpu hotplug before fs sync in order to
+	 * prevent kobj_uevent from sending hotplug event to user space
+	 * that might wakeup eventpoll and abort suspend flow as well
+	 */
+	if (state == PM_SUSPEND_MEM)
+		__pm_notifier_call_chain(PM_STOP_CPU_DYNAMIC_HOTPLUG, -1, NULL);
+#endif
 
 #ifndef CONFIG_SUSPEND_SKIP_SYNC
 	trace_suspend_resume(TPS("sync_filesystems"), 0, true);
@@ -575,3 +647,21 @@ int pm_suspend(suspend_state_t state)
 	return error;
 }
 EXPORT_SYMBOL(pm_suspend);
+
+static int __init sync_queue_init(void)
+{
+	suspend_sys_sync_work_queue =
+		create_singlethread_workqueue("suspend_sys_sync");
+	if (suspend_sys_sync_work_queue == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void  __exit sync_queue_exit(void)
+{
+	destroy_workqueue(suspend_sys_sync_work_queue);
+}
+
+core_initcall(sync_queue_init);
+module_exit(sync_queue_exit);

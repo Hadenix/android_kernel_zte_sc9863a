@@ -10,6 +10,13 @@
 #include <linux/syscalls.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+/* ZSW_ADD FOR CPUFREEZER begin */
+#include <stdbool.h>
+
+#ifndef ZTE_FEATURE_CGROUP_FREEZER
+#define ZTE_FEATURE_CGROUP_FREEZER               false
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
 
 /* total number of freezing conditions in effect */
 atomic_t system_freezing_cnt = ATOMIC_INIT(0);
@@ -53,6 +60,29 @@ bool freezing_slow_path(struct task_struct *p)
 
 	return false;
 }
+
+/* ZSW_ADD FOR CPUFREEZER begin */
+void set_task_unfreezable(struct task_struct *p)
+{
+	spin_lock_irq(&freezer_lock);
+	if ((freezing(p) || frozen(p)) && !(p->flags & PF_NOFREEZE)) {
+		p->flags |= PF_NOFREEZE;
+		p->flags |= PF_BINDER_NOFROZE;
+	}
+	spin_unlock_irq(&freezer_lock);
+}
+
+void clear_task_unfreezable(struct task_struct *p)
+{
+	spin_lock_irq(&freezer_lock);
+	if ((p->flags & PF_BINDER_NOFROZE) && !(p->flags & PF_FROZEN)) {
+		p->flags &= ~PF_BINDER_NOFROZE;
+		p->flags &= ~PF_NOFREEZE;
+	}
+	spin_unlock_irq(&freezer_lock);
+}
+/* ZSW_ADD FOR CPUFREEZER end */
+
 EXPORT_SYMBOL(freezing_slow_path);
 
 /* Refrigerator is place where frozen processes are stored :-). */
@@ -71,8 +101,17 @@ bool __refrigerator(bool check_kthr_stop)
 		spin_lock_irq(&freezer_lock);
 		current->flags |= PF_FROZEN;
 		if (!freezing(current) ||
-		    (check_kthr_stop && kthread_should_stop()))
+		    (check_kthr_stop && kthread_should_stop())) {
 			current->flags &= ~PF_FROZEN;
+/* ZSW_ADD FOR CPUFREEZER begin */
+#if ZTE_FEATURE_CGROUP_FREEZER == true
+			if (current->flags & PF_BINDER_NOFROZE) {
+				current->flags &= ~PF_BINDER_NOFROZE;
+				current->flags &= ~PF_NOFREEZE;
+			}
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
+		}
 		spin_unlock_irq(&freezer_lock);
 
 		if (!(current->flags & PF_FROZEN))
@@ -149,7 +188,11 @@ bool freeze_task(struct task_struct *p)
 void __thaw_task(struct task_struct *p)
 {
 	unsigned long flags;
-
+/* ZSW_ADD FOR CPUFREEZER begin */
+#if ZTE_FEATURE_CGROUP_FREEZER == true
+	clear_task_unfreezable(p);
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
 	spin_lock_irqsave(&freezer_lock, flags);
 	if (frozen(p))
 		wake_up_process(p);

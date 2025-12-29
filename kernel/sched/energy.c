@@ -28,6 +28,7 @@
 #include <linux/stddef.h>
 
 struct sched_group_energy *sge_array[NR_CPUS][NR_SD_LEVELS];
+struct cpumask min_cap_cpu_mask;
 
 static void free_resources(void)
 {
@@ -55,6 +56,8 @@ void init_sched_energy_costs(void)
 	const struct property *prop;
 	int sd_level, i, nstates, cpu;
 	const __be32 *val;
+	unsigned long min_cap = ULONG_MAX;
+	unsigned long capacity;
 
 	for_each_possible_cpu(cpu) {
 		cn = of_get_cpu_node(cpu, NULL);
@@ -114,9 +117,22 @@ void init_sched_energy_costs(void)
 
 			sge_array[cpu][sd_level] = sge;
 		}
-	}
 
-	pr_info("Sched-energy-costs installed from DT\n");
+		/* find min_cap cpu masks */
+		sge = sge_array[cpu][SD_LEVEL0];
+		if (!sge)
+			continue;
+		capacity = sge->cap_states[sge->nr_cap_states - 1].cap;
+		if (capacity < min_cap) {
+			cpumask_clear(&min_cap_cpu_mask);
+			min_cap = capacity;
+		}
+
+		if (capacity == min_cap)
+			cpumask_set_cpu(cpu, &min_cap_cpu_mask);
+	}
+	pr_info("Energy-costs installed from DT, min_cap_cpu_mask: %*pbl\n",
+			cpumask_pr_args(&min_cap_cpu_mask));
 	return;
 
 out:

@@ -218,8 +218,14 @@ void kernel_restart(char *cmd)
 	syscore_shutdown();
 	if (!cmd)
 		pr_emerg("Restarting system\n");
-	else
+	else {
 		pr_emerg("Restarting system with command '%s'\n", cmd);
+		if (!strncmp(cmd, "alarm", 5)) {
+			pr_warn("[SPRD_DEB]cmd: %s, pid=%d, proc=%s\n",
+				cmd, task_pid_nr(current), current->comm);
+			dump_stack();
+		}
+	}
 	kmsg_dump(KMSG_DUMP_RESTART);
 	machine_restart(cmd);
 }

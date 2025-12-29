@@ -855,6 +855,10 @@ static inline void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
 	update_rq_clock(rq);
 	if (!(flags & ENQUEUE_RESTORE))
 		sched_info_queued(rq, p);
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS))
+		update_rq_runnable_task_avg(rq);
+#endif
 	p->sched_class->enqueue_task(rq, p, flags);
 }
 
@@ -863,6 +867,10 @@ static inline void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 	update_rq_clock(rq);
 	if (!(flags & DEQUEUE_SAVE))
 		sched_info_dequeued(rq, p);
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS))
+		update_rq_runnable_task_avg(rq);
+#endif
 	p->sched_class->dequeue_task(rq, p, flags);
 }
 
@@ -1189,10 +1197,17 @@ void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_ma
 	p->nr_cpus_allowed = cpumask_weight(new_mask);
 }
 
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+extern struct cpumask compat_32bit_cpu_mask;
+#endif
+
 void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
 	struct rq *rq = task_rq(p);
 	bool queued, running;
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	struct cpumask dstp;
+#endif
 
 	lockdep_assert_held(&p->pi_lock);
 
@@ -1210,12 +1225,22 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 	if (running)
 		put_prev_task(rq, p);
 
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	cpumask_copy(&dstp, new_mask);
+	if (is_compat_thread(task_thread_info(p))) {
+		cpumask_and(&dstp, new_mask, &compat_32bit_cpu_mask);
+	if (cpumask_empty(&dstp))
+		cpumask_copy(&dstp, &compat_32bit_cpu_mask);
+	}
+	p->sched_class->set_cpus_allowed(p, &dstp);
+#else
 	p->sched_class->set_cpus_allowed(p, new_mask);
+#endif
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, p, ENQUEUE_RESTORE);
+	if (running)
+		p->sched_class->set_curr_task(rq);
 }
 
 /*
@@ -1234,6 +1259,9 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	struct rq *rq;
 	unsigned int dest_cpu;
 	int ret = 0;
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	struct cpumask dstp;
+#endif
 
 	rq = task_rq_lock(p, &flags);
 
@@ -1255,6 +1283,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	}
 
 	do_set_cpus_allowed(p, new_mask);
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	if (is_compat_thread(task_thread_info(p))) {
+		cpumask_and(&dstp, new_mask, &compat_32bit_cpu_mask);
+		if (cpumask_empty(&dstp))
+			cpumask_copy(&dstp, &compat_32bit_cpu_mask);
+		new_mask = &dstp;
+	}
+#endif
 
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
@@ -3002,6 +3038,10 @@ void scheduler_tick(void)
 	walt_update_task_ravg(rq->curr, rq, TASK_UPDATE,
 			walt_ktime_clock(), 0);
 	update_rq_clock(rq);
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS))
+		update_rq_runnable_task_avg(rq);
+#endif
 	curr->sched_class->task_tick(rq, curr, 0);
 	update_cpu_load_active(rq);
 	calc_global_load_tick(rq);
@@ -3581,10 +3621,10 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 
 	p->prio = prio;
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, p, enqueue_flag);
+	if (running)
+		p->sched_class->set_curr_task(rq);
 
 	check_class_changed(rq, p, prev_class, oldprio);
 out_unlock:
@@ -4143,8 +4183,6 @@ change:
 	prev_class = p->sched_class;
 	__setscheduler(rq, p, attr, pi);
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued) {
 		int enqueue_flags = ENQUEUE_RESTORE;
 		/*
@@ -4156,6 +4194,8 @@ change:
 
 		enqueue_task(rq, p, enqueue_flags);
 	}
+	if (running)
+		p->sched_class->set_curr_task(rq);
 
 	check_class_changed(rq, p, prev_class, oldprio);
 	preempt_disable(); /* avoid rq from going away on us */
@@ -5313,10 +5353,10 @@ void sched_setnuma(struct task_struct *p, int nid)
 
 	p->numa_preferred_nid = nid;
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, p, ENQUEUE_RESTORE);
+	if (running)
+		p->sched_class->set_curr_task(rq);
 	task_rq_unlock(rq, p, &flags);
 }
 #endif /* CONFIG_NUMA_BALANCING */
@@ -5567,7 +5607,11 @@ static struct ctl_table *
 sd_alloc_ctl_domain_table(struct sched_domain *sd)
 {
 	struct ctl_table *table;
+#ifdef CONFIG_INTEL_DWS
+	unsigned int nr_entries = 15;
+#else
 	unsigned int nr_entries = 14;
+#endif
 
 	int i = 0;
 	struct sched_group *sg = sd->groups;
@@ -5613,10 +5657,18 @@ sd_alloc_ctl_domain_table(struct sched_domain *sd)
 		sizeof(long), 0644, proc_doulongvec_minmax, false);
 	set_table_entry(&table[12], "name", sd->name,
 		CORENAME_MAX_SIZE, 0444, proc_dostring, false);
+#ifdef CONFIG_INTEL_DWS
+	set_table_entry(&table[13], "dws_tf", &sd->dws_tf,
+		sizeof(int), 0644, proc_dointvec, false);
+#endif
 	sg = sd->groups;
 	if (sg->sge) {
 		char buf[32];
+#ifdef CONFIG_INTEL_DWS
+		struct ctl_table *entry = &table[14];
+#else
 		struct ctl_table *entry = &table[13];
+#endif
 
 		do {
 			snprintf(buf, 32, "group%d", i);
@@ -6255,7 +6307,11 @@ static void update_top_cache_domain(int cpu)
 	int id = cpu;
 	int size = 1;
 
+#ifdef CONFIG_INTEL_DWS
+	sd = highest_flag_domain(cpu, SD_SHARE_PKG_RESOURCES, 1);
+#else
 	sd = highest_flag_domain(cpu, SD_SHARE_PKG_RESOURCES);
+#endif
 	if (sd) {
 		id = cpumask_first(sched_domain_span(sd));
 		size = cpumask_weight(sched_domain_span(sd));
@@ -6270,7 +6326,11 @@ static void update_top_cache_domain(int cpu)
 	sd = lowest_flag_domain(cpu, SD_NUMA);
 	rcu_assign_pointer(per_cpu(sd_numa, cpu), sd);
 
+#ifdef CONFIG_INTEL_DWS
+	sd = highest_flag_domain(cpu, SD_ASYM_PACKING, 1);
+#else
 	sd = highest_flag_domain(cpu, SD_ASYM_PACKING);
+#endif
 	rcu_assign_pointer(per_cpu(sd_asym, cpu), sd);
 
 	for_each_domain(cpu, sd) {
@@ -6281,9 +6341,45 @@ static void update_top_cache_domain(int cpu)
 	}
 	rcu_assign_pointer(per_cpu(sd_ea, cpu), ea_sd);
 
+#ifdef CONFIG_INTEL_DWS
+	sd = highest_flag_domain(cpu, SD_SHARE_CAP_STATES, 1);
+#else
 	sd = highest_flag_domain(cpu, SD_SHARE_CAP_STATES);
+#endif
 	rcu_assign_pointer(per_cpu(sd_scs, cpu), sd);
 }
+
+#ifdef CONFIG_INTEL_DWS
+DEFINE_PER_CPU(struct sched_domain *, sd_dws);
+
+static void update_dws_domain(struct sched_domain *sd, int cpu)
+{
+	while (sd) {
+		int i = 0, j = 0, first, min = INT_MAX;
+		struct sched_group *group;
+
+		group = sd->groups;
+		first = group_first_cpu(group);
+		do {
+			int k = group_first_cpu(group);
+			i += 1;
+			if (k < first)
+				j += 1;
+			if (k < min) {
+				sd->first_group = group;
+				min = k;
+			}
+		} while (group = group->next, group != sd->groups);
+
+		sd->total_groups = i;
+		sd->group_number = j;
+		sd = sd->parent;
+	}
+
+	sd = highest_flag_domain(cpu, SD_INTEL_DWS, 0);
+	rcu_assign_pointer(per_cpu(sd_dws, cpu), sd);
+}
+#endif
 
 /*
  * Attach the domain 'sd' to 'cpu' as its base domain. Callers must
@@ -6333,6 +6429,10 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 	destroy_sched_domains(tmp, cpu);
 
 	update_top_cache_domain(cpu);
+
+#ifdef CONFIG_INTEL_DWS
+	update_dws_domain(sd, cpu);
+#endif
 }
 
 /* Setup the mask of cpus configured for isolated domains */
@@ -6763,6 +6863,7 @@ static int sched_domains_curr_level;
  *   SD_SHARE_POWERDOMAIN   - describes shared power domain
  *   SD_ASYM_CPUCAPACITY    - describes mixed capacity topologies
  *   SD_SHARE_CAP_STATES    - describes shared capacity states
+ *   SD_INTEL_DWS           - describes Intel DWS
  *
  * Odd one out, which beside describing the topology has a quirk also
  * prescribes the desired behaviour that goes along with it:
@@ -6770,6 +6871,16 @@ static int sched_domains_curr_level;
  * Odd one out:
  * SD_ASYM_PACKING        - describes SMT quirks
  */
+#ifdef CONFIG_INTEL_DWS
+#define TOPOLOGY_SD_FLAGS		\
+	(SD_SHARE_CPUCAPACITY |		\
+	 SD_SHARE_PKG_RESOURCES |	\
+	 SD_NUMA |			\
+	 SD_ASYM_PACKING |		\
+	 SD_SHARE_POWERDOMAIN |		\
+	 SD_SHARE_CAP_STATES |		\
+	 SD_INTEL_DWS)
+#else
 #define TOPOLOGY_SD_FLAGS		\
 	(SD_SHARE_CPUCAPACITY |		\
 	 SD_SHARE_PKG_RESOURCES |	\
@@ -6778,10 +6889,11 @@ static int sched_domains_curr_level;
 	 SD_ASYM_CPUCAPACITY |		\
 	 SD_SHARE_POWERDOMAIN |		\
 	 SD_SHARE_CAP_STATES)
+#endif
 
 static struct sched_domain *
 sd_init(struct sched_domain_topology_level *tl,
-	struct sched_domain *child, int cpu)
+	struct sched_domain *child, int dflags, int cpu)
 {
 	struct sched_domain *sd = *per_cpu_ptr(tl->data.sd, cpu);
 	int sd_weight, sd_flags = 0;
@@ -6797,6 +6909,10 @@ sd_init(struct sched_domain_topology_level *tl,
 
 	if (tl->sd_flags)
 		sd_flags = (*tl->sd_flags)();
+
+	/* Apply detected topology flags */
+	sd_flags |= dflags;
+
 	if (WARN_ONCE(sd_flags & ~TOPOLOGY_SD_FLAGS,
 			"wrong sd_flags in topology description\n"))
 		sd_flags &= ~TOPOLOGY_SD_FLAGS;
@@ -6825,6 +6941,9 @@ sd_init(struct sched_domain_topology_level *tl,
 					| 0*SD_SERIALIZE
 					| 0*SD_PREFER_SIBLING
 					| 0*SD_NUMA
+#ifdef CONFIG_INTEL_DWS
+					| 0*SD_INTEL_DWS
+#endif
 					| sd_flags
 					,
 
@@ -6834,6 +6953,9 @@ sd_init(struct sched_domain_topology_level *tl,
 		.max_newidle_lb_cost	= 0,
 		.next_decay_max_lb_cost	= jiffies,
 		.child			= child,
+#ifdef CONFIG_INTEL_DWS
+		.dws_tf			= 0,
+#endif
 #ifdef CONFIG_SCHED_DEBUG
 		.name			= tl->name,
 #endif
@@ -6843,7 +6965,8 @@ sd_init(struct sched_domain_topology_level *tl,
 	 * Convert topological properties into behaviour.
 	 */
 
-	if (sd->flags & SD_ASYM_CPUCAPACITY) {
+	if (sd->flags & SD_ASYM_CPUCAPACITY ||
+	    sched_feat(BALANCE_WAKE)) {
 		struct sched_domain *t = sd;
 
 		for_each_lower_domain(t)
@@ -6880,6 +7003,14 @@ sd_init(struct sched_domain_topology_level *tl,
 		sd->busy_idx = 2;
 		sd->idle_idx = 1;
 	}
+
+#ifdef CONFIG_INTEL_DWS
+	if (sd->flags & SD_INTEL_DWS)
+		sd->dws_tf = 120;
+	if (sd->flags & SD_INTEL_DWS && sd->flags & SD_SHARE_PKG_RESOURCES)
+		sd->dws_tf = 160;
+
+#endif
 
 	sd->private = &tl->data;
 
@@ -7294,9 +7425,9 @@ static void __sdt_free(const struct cpumask *cpu_map)
 
 struct sched_domain *build_sched_domain(struct sched_domain_topology_level *tl,
 		const struct cpumask *cpu_map, struct sched_domain_attr *attr,
-		struct sched_domain *child, int cpu)
+		struct sched_domain *child, int dflags, int cpu)
 {
-	struct sched_domain *sd = sd_init(tl, child, cpu);
+	struct sched_domain *sd = sd_init(tl, child, dflags, cpu);
 
 	cpumask_and(sched_domain_span(sd), cpu_map, tl->mask(cpu));
 	if (child) {
@@ -7324,6 +7455,65 @@ struct sched_domain *build_sched_domain(struct sched_domain_topology_level *tl,
 }
 
 /*
+ * Find the sched_domain_topology_level where all CPU capacities are visible
+ * for all CPUs.
+ */
+static struct sched_domain_topology_level
+*asym_cpu_capacity_level(const struct cpumask *cpu_map)
+{
+	int i, j, asym_level = 0;
+	bool asym = false;
+	struct sched_domain_topology_level *tl, *asym_tl = NULL;
+	unsigned long cap;
+
+	/* Is there any asymmetry? */
+	cap = arch_scale_cpu_capacity(NULL, cpumask_first(cpu_map));
+
+	for_each_cpu(i, cpu_map) {
+		if (arch_scale_cpu_capacity(NULL, i) != cap) {
+			asym = true;
+			break;
+		}
+	}
+
+	if (!asym)
+		return NULL;
+
+	/*
+	 * Examine topology from all CPU's point of views to detect the lowest
+	 * sched_domain_topology_level where a highest capacity CPU is visible
+	 * to everyone.
+	 */
+	for_each_cpu(i, cpu_map) {
+		unsigned long max_capacity = arch_scale_cpu_capacity(NULL, i);
+		int tl_id = 0;
+
+		for_each_sd_topology(tl) {
+			if (tl_id < asym_level)
+				goto next_level;
+
+			for_each_cpu_and(j, tl->mask(i), cpu_map) {
+				unsigned long capacity;
+
+				capacity = arch_scale_cpu_capacity(NULL, j);
+
+				if (capacity <= max_capacity)
+					continue;
+
+				max_capacity = capacity;
+				asym_level = tl_id;
+				asym_tl = tl;
+			}
+next_level:
+			tl_id++;
+		}
+	}
+
+	return asym_tl;
+}
+
+bool sched_asym_cpucapacity;
+/*
  * Build sched domains for a given set of cpus and attach the sched domains
  * to the individual cpus
  */
@@ -7334,18 +7524,28 @@ static int build_sched_domains(const struct cpumask *cpu_map,
 	struct sched_domain *sd;
 	struct s_data d;
 	int i, ret = -ENOMEM;
+	struct sched_domain_topology_level *tl_asym;
+	bool has_asym = false;
 
 	alloc_state = __visit_domain_allocation_hell(&d, cpu_map);
 	if (alloc_state != sa_rootdomain)
 		goto error;
 
+	tl_asym = asym_cpu_capacity_level(cpu_map);
 	/* Set up domains for cpus specified by the cpu_map. */
 	for_each_cpu(i, cpu_map) {
 		struct sched_domain_topology_level *tl;
 
 		sd = NULL;
 		for_each_sd_topology(tl) {
-			sd = build_sched_domain(tl, cpu_map, attr, sd, i);
+			int dflags = 0;
+
+			if (tl == tl_asym) {
+				dflags |= SD_ASYM_CPUCAPACITY;
+				has_asym = true;
+			}
+
+			sd = build_sched_domain(tl, cpu_map, attr, sd, dflags, i);
 			if (tl == sched_domain_topology)
 				*per_cpu_ptr(d.sd, i) = sd;
 			if (tl->flags & SDTL_OVERLAP || sched_feat(FORCE_SD_OVERLAP))
@@ -7400,6 +7600,11 @@ static int build_sched_domains(const struct cpumask *cpu_map,
 		cpu_attach_domain(sd, d.rd, i);
 	}
 	rcu_read_unlock();
+
+	if (has_asym)
+		sched_asym_cpucapacity = true;
+	else if (sched_asym_cpucapacity)
+		sched_asym_cpucapacity = false;
 
 	ret = 0;
 error:
@@ -7859,6 +8064,7 @@ void __init sched_init(void)
 		rq->cur_irqload = 0;
 		rq->avg_irqload = 0;
 		rq->irqload_ts = 0;
+		rq->is_busy = CPU_BUSY_CLR;
 #endif
 
 		INIT_LIST_HEAD(&rq->cfs_tasks);
@@ -7873,6 +8079,10 @@ void __init sched_init(void)
 #endif
 		init_rq_hrtick(rq);
 		atomic_set(&rq->nr_iowait, 0);
+
+#ifdef CONFIG_INTEL_DWS
+		init_intel_dws(rq);
+#endif
 	}
 
 	set_load_weight(&init_task);
@@ -7911,6 +8121,15 @@ void __init sched_init(void)
 	set_cpu_rq_start_time();
 #endif
 	init_sched_fair_class();
+
+#ifdef CONFIG_64BIT_ONLY_CPU
+	arch_get_64bit_only_cpus(&b64_only_cpu_mask);
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	/* get cpus that support AArch32 and store in compat_32bit_cpu_mask */
+	cpumask_andnot(&compat_32bit_cpu_mask, cpu_present_mask,
+		&b64_only_cpu_mask);
+#endif
+#endif
 
 	scheduler_running = 1;
 }
@@ -8203,10 +8422,10 @@ void sched_move_task(struct task_struct *tsk)
 
 	sched_change_group(tsk, TASK_MOVE_GROUP);
 
-	if (unlikely(running))
-		tsk->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, tsk, ENQUEUE_RESTORE);
+	if (unlikely(running))
+		tsk->sched_class->set_curr_task(rq);
 
 	task_rq_unlock(rq, tsk, &flags);
 }

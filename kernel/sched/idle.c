@@ -25,6 +25,11 @@ void sched_idle_set_state(struct cpuidle_state *idle_state, int index)
 	idle_set_state_idx(this_rq(), index);
 }
 
+struct cpuidle_state *sched_idle_get_state(int cpu)
+{
+	return idle_get_state(cpu_rq(cpu));
+}
+
 static int __read_mostly cpu_idle_force_poll;
 
 void cpu_idle_poll_ctrl(bool enable)

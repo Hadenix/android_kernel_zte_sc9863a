@@ -25,6 +25,8 @@
 #include <linux/posix-timers.h>
 #include <linux/workqueue.h>
 #include <linux/freezer.h>
+#include <linux/workqueue.h>
+#include <linux/wakelock.h>
 
 /**
  * struct alarm_base - Alarm timer bases
@@ -41,9 +43,20 @@ static struct alarm_base {
 	clockid_t		base_clockid;
 } alarm_bases[ALARM_NUMTYPE];
 
+enum ALARM_TYPE {
+	SET_POWERON_ALARM = 0,
+	GET_POWERON_ALARM,
+	SET_WAKE_ALARM,
+	GET_WAKE_ALARM,
+	SET_POWEROFF_ALARM,
+	GET_POWEROFF_ALARM,
+};
+
 /* freezer delta & lock used to handle clock_nanosleep triggered wakeups */
 static ktime_t freezer_delta;
 static DEFINE_SPINLOCK(freezer_delta_lock);
+struct work_struct work;
+struct wake_lock alarm_wake_lock;
 
 static struct wakeup_source *ws;
 
@@ -52,6 +65,7 @@ static struct wakeup_source *ws;
 static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
+static int set_real_alarm_flag;
 
 /**
  * alarmtimer_get_rtcdev - Return selected rtcdevice
@@ -196,7 +210,6 @@ static enum hrtimer_restart alarmtimer_fired(struct hrtimer *timer)
 	spin_unlock_irqrestore(&base->lock, flags);
 
 	return ret;
-
 }
 
 ktime_t alarm_expires_remaining(const struct alarm *alarm)
@@ -219,12 +232,12 @@ EXPORT_SYMBOL_GPL(alarm_expires_remaining);
  */
 static int alarmtimer_suspend(struct device *dev)
 {
-	struct rtc_time tm;
-	ktime_t min, now;
+	struct rtc_time tm, tm_set;
+	ktime_t min, now, set_time;
 	unsigned long flags;
 	struct rtc_device *rtc;
-	int i;
-	int ret;
+	struct rtc_wkalrm alarm;
+	int i, ret = 0;
 
 	spin_lock_irqsave(&freezer_delta_lock, flags);
 	min = freezer_delta;
@@ -262,19 +275,128 @@ static int alarmtimer_suspend(struct device *dev)
 	/* Setup an rtc timer to fire that far in the future */
 	rtc_timer_cancel(rtc, &rtctimer);
 	rtc_read_time(rtc, &tm);
-	now = rtc_tm_to_ktime(tm);
-	now = ktime_add(now, min);
 
-	/* Set alarm, if in the past reject suspend briefly to handle */
-	ret = rtc_timer_start(rtc, &rtctimer, now, ktime_set(0, 0));
-	if (ret < 0)
-		__pm_wakeup_event(ws, MSEC_PER_SEC);
+	now = rtc_tm_to_ktime(tm);
+	set_time = ktime_add(now, min);
+	tm_set = rtc_ktime_to_tm(set_time);
+	pr_info("Suspend alarm: %d-%d-%d %d:%d:%d\n", tm_set.tm_year + 1900,
+		tm_set.tm_mon + 1, tm_set.tm_mday, tm_set.tm_hour,
+		tm_set.tm_min, tm_set.tm_sec);
+
+	alarm.time = tm_set;
+	alarm.enabled = 1;
+	if (rtc->ops && rtc->ops->set_alarm) {
+		ret = rtc->ops->ioctl(rtc->dev.parent,
+				      SET_WAKE_ALARM, (unsigned long)&alarm);
+		/* Set alarm, if in the past reject suspend briefly to handle */
+		if (ret < 0) {
+			pr_err("Suspend alarm setting error %d\n", ret);
+			__pm_wakeup_event(ws, MSEC_PER_SEC);
+		}
+	}
+
 	return ret;
 }
 #else
 static int alarmtimer_suspend(struct device *dev)
 {
 	return 0;
+}
+#endif
+
+#ifdef CONFIG_RTC_CLASS
+void alarmtimer_shutdown(struct platform_device *pdev)
+{
+	struct rtc_time tm, tm_set;
+	ktime_t min, early, set_time, now;
+	unsigned long flags;
+	struct rtc_device *rtc;
+	int ret = 0, alarm_type = 0, i;
+	struct rtc_wkalrm alarm;
+
+	min = ktime_set(0, 0);
+	early = ktime_set(120, 0);
+
+	rtc = alarmtimer_get_rtcdev();
+	/* If we have no rtcdev, just return */
+	if (!rtc) {
+		pr_info("no alarm dev found\n");
+		return;
+	}
+
+	/* Find the soonest timer to expire*/
+	for (i = ALARM_POWERON; i < ALARM_NUMTYPE; i++) {
+		struct alarm_base *base = &alarm_bases[i];
+		struct timerqueue_node *next;
+		ktime_t delta;
+
+		spin_lock_irqsave(&base->lock, flags);
+		next = timerqueue_getnext(&base->timerqueue);
+		spin_unlock_irqrestore(&base->lock, flags);
+		if (!next)
+			continue;
+
+		delta = ktime_sub(next->expires, base->gettime());
+		if ((i == ALARM_POWEROFF_ALARM) &&
+		    (ktime_compare(delta, early) <= 0)) {
+			pr_info("Poweroff alarm is less than two minutes.\n");
+		} else if (!min.tv64 || (ktime_compare(delta, min) <= 0)) {
+			min = delta;
+			alarm_type = i;
+		}
+	}
+
+	if (min.tv64 == 0 && set_real_alarm_flag) {
+		pr_info("disable rtc alarm.\n");
+		alarm.enabled = 0;
+		if (rtc->ops && rtc->ops->set_alarm)
+			ret = rtc->ops->set_alarm(rtc->dev.parent, &alarm);
+		set_real_alarm_flag = 0;
+		pr_warn("No poweroff alarm found\n");
+		return;
+	}
+
+	if (ktime_to_ms(min) < 10 * MSEC_PER_SEC) {
+		pr_warn("Don't need to set poweroff alarm due to less than 10s\n");
+		return;
+	}
+
+	/* Setup an rtc timer to fire that far in the future */
+	rtc_timer_cancel(rtc, &rtctimer);
+	rtc_read_time(rtc, &tm);
+	now = rtc_tm_to_ktime(tm);
+	set_time = ktime_add(now, min);
+
+	if (alarm_type == ALARM_POWEROFF_ALARM)
+		set_time = ktime_sub(set_time, early);
+
+	tm_set = rtc_ktime_to_tm(set_time);
+	pr_info("Poweroff alarm: %d-%d-%d %d:%d:%d\n",
+		tm_set.tm_year + 1900, tm_set.tm_mon + 1, tm_set.tm_mday,
+		tm_set.tm_hour + 8, tm_set.tm_min, tm_set.tm_sec);
+
+	alarm.time = tm_set;
+	alarm.enabled = 1;
+
+	if (rtc->ops && rtc->ops->set_alarm) {
+		if (alarm_type == ALARM_POWEROFF_ALARM) {
+			ret = rtc->ops->ioctl(rtc->dev.parent,
+					      SET_POWEROFF_ALARM,
+					      (unsigned long)&alarm);
+		} else {
+			ret = rtc->ops->ioctl(rtc->dev.parent,
+					      SET_POWERON_ALARM,
+					      (unsigned long)&alarm);
+		}
+	}
+
+	if (ret)
+		pr_err("Power off alarm setting error %d\n", ret);
+}
+#else
+void alarmtimer_shutdown(struct platform_device *pdev)
+{
+	return;
 }
 #endif
 
@@ -312,6 +434,79 @@ void alarm_init(struct alarm *alarm, enum alarmtimer_type type,
 }
 EXPORT_SYMBOL_GPL(alarm_init);
 
+#ifdef CONFIG_RTC_CLASS
+static void set_real_alarm(struct work_struct *work)
+{
+	struct rtc_time tm;
+	ktime_t min, now;
+	unsigned long flags;
+	struct rtc_device *rtc;
+	int i, ret;
+	struct rtc_wkalrm alarm;
+	int alarm_type = 0;
+
+	spin_lock_irqsave(&freezer_delta_lock, flags);
+	min = freezer_delta;
+	freezer_delta = ktime_set(0, 0);
+	spin_unlock_irqrestore(&freezer_delta_lock, flags);
+
+	rtc = alarmtimer_get_rtcdev();
+	/* If we have no rtcdev, just return */
+	if (!rtc)
+		return;
+
+	wake_lock(&alarm_wake_lock);
+	/* Find the soonest timer to expire*/
+	for (i = ALARM_POWERON; i < ALARM_NUMTYPE; i++) {
+		struct alarm_base *base = &alarm_bases[i];
+		struct timerqueue_node *next;
+		ktime_t delta;
+
+		spin_lock_irqsave(&base->lock, flags);
+		next = timerqueue_getnext(&base->timerqueue);
+		spin_unlock_irqrestore(&base->lock, flags);
+		if (!next)
+			continue;
+		delta = ktime_sub(next->expires, base->gettime());
+		if (!min.tv64 || (ktime_compare(delta, min) <= 0)) {
+			min = delta;
+			alarm_type = i;
+		}
+	}
+
+	if (min.tv64 == 0) {
+		wake_unlock(&alarm_wake_lock);
+		return;
+	}
+
+	/* Setup an rtc timer to fire that far in the future */
+	rtc_timer_cancel(rtc, &rtctimer);
+	rtc_read_time(rtc, &tm);
+	now = rtc_tm_to_ktime(tm);
+	now = ktime_add(now, min);
+
+	alarm.time = rtc_ktime_to_tm(now);
+	alarm.enabled = 1;
+
+	if (rtc->ops && rtc->ops->set_alarm) {
+		if (alarm_type == ALARM_POWEROFF_ALARM) {
+			ret = rtc->ops->ioctl(rtc->dev.parent,
+					      SET_POWEROFF_ALARM,
+					      (unsigned long)&alarm);
+		} else if (alarm_type == ALARM_POWERON) {
+			ret = rtc->ops->ioctl(rtc->dev.parent,
+					      SET_POWERON_ALARM,
+					      (unsigned long)&alarm);
+		} else {
+			pr_warn("alarm type: %d should not power on system\n",
+				alarm_type);
+		}
+	}
+
+	set_real_alarm_flag = 1;
+	wake_unlock(&alarm_wake_lock);
+}
+#endif
 /**
  * alarm_start - Sets an absolute alarm to fire
  * @alarm: ptr to alarm to set
@@ -327,6 +522,7 @@ void alarm_start(struct alarm *alarm, ktime_t start)
 	alarmtimer_enqueue(base, alarm);
 	hrtimer_start(&alarm->timer, alarm->node.expires, HRTIMER_MODE_ABS);
 	spin_unlock_irqrestore(&base->lock, flags);
+	schedule_work(&work);
 }
 EXPORT_SYMBOL_GPL(alarm_start);
 
@@ -449,6 +645,12 @@ static enum alarmtimer_type clock2alarm(clockid_t clockid)
 		return ALARM_REALTIME;
 	if (clockid == CLOCK_BOOTTIME_ALARM)
 		return ALARM_BOOTTIME;
+	if (clockid == CLOCK_POWEROFF_WAKE)
+		return ALARM_POWEROFF;
+	if (clockid == CLOCK_POWERON_WAKE)
+		return ALARM_POWERON;
+	if (clockid == CLOCK_POWEROFF_ALARM)
+		return ALARM_POWEROFF_ALARM;
 	return -1;
 }
 
@@ -815,7 +1017,8 @@ static struct platform_driver alarmtimer_driver = {
 	.driver = {
 		.name = "alarmtimer",
 		.pm = &alarmtimer_pm_ops,
-	}
+	},
+	.shutdown = alarmtimer_shutdown,
 };
 
 /**
@@ -844,15 +1047,31 @@ static int __init alarmtimer_init(void)
 	posix_timers_register_clock(CLOCK_REALTIME_ALARM, &alarm_clock);
 	posix_timers_register_clock(CLOCK_BOOTTIME_ALARM, &alarm_clock);
 
+	posix_timers_register_clock(CLOCK_POWEROFF_WAKE, &alarm_clock);
+	posix_timers_register_clock(CLOCK_POWERON_WAKE, &alarm_clock);
+	posix_timers_register_clock(CLOCK_POWEROFF_ALARM, &alarm_clock);
+
 	/* Initialize alarm bases */
 	alarm_bases[ALARM_REALTIME].base_clockid = CLOCK_REALTIME;
 	alarm_bases[ALARM_REALTIME].gettime = &ktime_get_real;
 	alarm_bases[ALARM_BOOTTIME].base_clockid = CLOCK_BOOTTIME;
 	alarm_bases[ALARM_BOOTTIME].gettime = &ktime_get_boottime;
+	alarm_bases[ALARM_POWEROFF].base_clockid = CLOCK_REALTIME;
+	alarm_bases[ALARM_POWEROFF].gettime = &ktime_get_real;
+	alarm_bases[ALARM_POWERON].base_clockid = CLOCK_REALTIME;
+	alarm_bases[ALARM_POWERON].gettime = &ktime_get_real;
+	alarm_bases[ALARM_POWEROFF_ALARM].base_clockid = CLOCK_REALTIME;
+	alarm_bases[ALARM_POWEROFF_ALARM].gettime = &ktime_get_real;
 	for (i = 0; i < ALARM_NUMTYPE; i++) {
 		timerqueue_init_head(&alarm_bases[i].timerqueue);
 		spin_lock_init(&alarm_bases[i].lock);
 	}
+
+#ifdef CONFIG_RTC_CLASS
+	INIT_WORK(&work, set_real_alarm);
+#endif
+	wake_lock_init(&alarm_wake_lock, WAKE_LOCK_SUSPEND,
+			"alarmtimer");
 
 	error = alarmtimer_rtc_interface_setup();
 	if (error)

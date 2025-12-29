@@ -384,6 +384,9 @@ struct cfs_rq {
 	struct sched_avg avg;
 	u64 runnable_load_sum;
 	unsigned long runnable_load_avg;
+#ifdef CONFIG_64BIT_ONLY_CPU
+	unsigned long runnable_load_avg_32bit;
+#endif
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	unsigned long tg_load_avg_contrib;
 	unsigned long propagate_avg;
@@ -545,9 +548,6 @@ struct root_domain {
 	/* Indicate more than one runnable task for any CPU */
 	bool overload;
 
-	/* Indicate one or more cpus over-utilized (tipping point) */
-	bool overutilized;
-
 	/*
 	 * The bit corresponding to a CPU gets set here if such CPU has more
 	 * than one runnable -deadline task (as it is below for RT tasks).
@@ -587,6 +587,15 @@ struct root_domain {
 extern struct root_domain def_root_domain;
 extern void sched_get_rd(struct root_domain *rd);
 extern void sched_put_rd(struct root_domain *rd);
+
+#ifdef CONFIG_INTEL_DWS
+struct intel_dws {
+	struct sched_avg avg;
+	int unload;
+	int dst_cpu;
+	struct cpu_stop_work unload_work;
+};
+#endif
 
 #ifdef HAVE_RT_PUSH_IPI
 extern void rto_push_irq_work_func(struct irq_work *work);
@@ -686,6 +695,10 @@ struct rq {
 
 	struct list_head cfs_tasks;
 
+#ifdef CONFIG_INTEL_DWS
+	struct intel_dws dws;
+#endif
+
 	u64 rt_avg;
 	u64 age_stamp;
 	u64 idle_stamp;
@@ -706,6 +719,11 @@ struct rq {
 	u64 avg_irqload;
 	u64 irqload_ts;
 	u64 cum_window_demand;
+	enum {
+		CPU_BUSY_CLR = 0,
+		CPU_BUSY_PREPARE,
+		CPU_BUSY_SET,
+	} is_busy;
 #endif /* CONFIG_SCHED_WALT */
 
 
@@ -875,16 +893,30 @@ extern void sched_ttwu_pending(void);
  *		be returned.
  * @flag:	The flag to check for the highest sched_domain
  *		for the given cpu.
+ * @all:	The flag is contained by all sched_domains from the hightest down
  *
  * Returns the highest sched_domain of a cpu which contains the given flag.
  */
+#ifdef CONFIG_INTEL_DWS
+static inline struct
+sched_domain *highest_flag_domain(int cpu, int flag, int all)
+#else
 static inline struct sched_domain *highest_flag_domain(int cpu, int flag)
+#endif
 {
 	struct sched_domain *sd, *hsd = NULL;
 
 	for_each_domain(cpu, sd) {
-		if (!(sd->flags & flag))
-			break;
+		if (!(sd->flags & flag)) {
+#ifdef CONFIG_INTEL_DWS
+			if (all)
+#endif
+				break;
+#ifdef CONFIG_INTEL_DWS
+			else
+				continue;
+#endif
+		}
 		hsd = sd;
 	}
 
@@ -911,6 +943,9 @@ DECLARE_PER_CPU(struct sched_domain *, sd_busy);
 DECLARE_PER_CPU(struct sched_domain *, sd_asym);
 DECLARE_PER_CPU(struct sched_domain *, sd_ea);
 DECLARE_PER_CPU(struct sched_domain *, sd_scs);
+#ifdef CONFIG_INTEL_DWS
+DECLARE_PER_CPU(struct sched_domain *, sd_dws);
+#endif
 
 struct sched_group_capacity {
 	atomic_t ref;
@@ -939,6 +974,7 @@ struct sched_group {
 	struct sched_group_capacity *sgc;
 	const struct sched_group_energy *sge;
 
+	bool overutilized;
 	/*
 	 * The CPUs this group covers.
 	 *
@@ -1345,11 +1381,22 @@ extern void idle_enter_fair(struct rq *this_rq);
 extern void idle_exit_fair(struct rq *this_rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
+#ifdef CONFIG_INTEL_DWS
+extern void update_rq_runnable_task_avg(struct rq *rq);
+extern void init_intel_dws(struct rq *rq);
+extern void dws_consolidated_cpus(struct sched_domain *sd, struct cpumask *mask);
+extern int dws_mask_cpu(int cpu);
+#endif
 
 #else
 
 static inline void idle_enter_fair(struct rq *rq) { }
 static inline void idle_exit_fair(struct rq *rq) { }
+
+#ifdef CONFIG_INTEL_DWS
+static inline void update_rq_runnable_task_avg(struct rq *rq) {}
+static inline void init_intel_dws(struct rq *rq) {}
+#endif
 
 #endif
 
@@ -1552,6 +1599,7 @@ unsigned long arch_scale_freq_capacity(struct sched_domain *sd, int cpu)
 }
 #endif
 
+#ifndef CONFIG_64BIT_ONLY_CPU
 #ifndef arch_scale_cpu_capacity
 static __always_inline
 unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
@@ -1561,6 +1609,9 @@ unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
 
 	return SCHED_CAPACITY_SCALE;
 }
+#endif
+#else
+extern unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu);
 #endif
 
 #ifdef CONFIG_SMP
@@ -1632,9 +1683,16 @@ static inline unsigned long cpu_util_freq(int cpu)
 	unsigned long capacity = capacity_orig_of(cpu);
 
 #ifdef CONFIG_SCHED_WALT
-	if (!walt_disabled && sysctl_sched_use_walt_cpu_util)
-		util = div64_u64(cpu_rq(cpu)->prev_runnable_sum,
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util) {
+		util = div64_u64(cpu_rq(cpu)->cumulative_runnable_avg,
 				 walt_ravg_window >> SCHED_LOAD_SHIFT);
+		if (cpu_rq(cpu)->is_busy == CPU_BUSY_SET) {
+			unsigned long prev_runnable_sum =
+				div64_u64(cpu_rq(cpu)->prev_runnable_sum,
+					  walt_ravg_window >> SCHED_LOAD_SHIFT);
+			util = max(util, prev_runnable_sum);
+		}
+	}
 #endif
 	return (util >= capacity) ? capacity : util;
 }
@@ -2029,19 +2087,13 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 {
         struct update_util_data *data;
 
-        data = rcu_dereference_sched(*this_cpu_ptr(&cpufreq_update_util_data));
-        if (data)
-                data->func(data, rq_clock(rq), flags);
-}
-
-static inline void cpufreq_update_this_cpu(struct rq *rq, unsigned int flags)
-{
-        if (cpu_of(rq) == smp_processor_id())
-                cpufreq_update_util(rq, flags);
+	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
+						  cpu_of(rq)));
+	if (data)
+		data->func(data, rq_clock(rq), flags);
 }
 #else
 static inline void cpufreq_update_util(struct rq *rq, unsigned int flags) {}
-static inline void cpufreq_update_this_cpu(struct rq *rq, unsigned int flags) {}
 #endif /* CONFIG_CPU_FREQ */
 
 #ifdef CONFIG_SCHED_WALT
@@ -2062,3 +2114,15 @@ walt_task_in_cum_window_demand(struct rq *rq, struct task_struct *p)
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()     (false)
 #endif
+
+#ifdef CONFIG_64BIT_ONLY_CPU
+extern struct cpumask b64_only_cpu_mask;
+extern struct cpumask compat_32bit_cpu_mask;
+extern void __init arch_get_64bit_only_cpus(struct cpumask *b64_only_cpu_mask);
+#endif
+
+#ifdef CONFIG_SMP
+extern struct cpumask min_cap_cpu_mask;
+#endif
+extern unsigned int capacity_margin;
+extern bool sched_asym_cpucapacity;

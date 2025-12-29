@@ -535,6 +535,28 @@ static int mode1_syscalls[] = {
 	__NR_seccomp_read, __NR_seccomp_write, __NR_seccomp_exit, __NR_seccomp_sigreturn,
 	0, /* null terminated */
 };
+#ifdef CONFIG_DBT
+/*
+ * We need to guarantee dbt host syscalls working properly no matter how the
+ * guest is setting its seccomp. This may expose some holes to dbt guest, but
+ * the allowed syscalls are restricted, it should not hurt that much...
+ */
+static int dbt_syscalls[] = {
+	__NR_seccomp_read, __NR_seccomp_write, __NR_seccomp_exit, __NR_seccomp_sigreturn,
+	__NR_dup3, __NR_fcntl, __NR_fstatfs, __NR_openat, __NR_close, __NR_getdents64,
+	__NR_lseek, __NR_read, __NR_write, __NR_readv, __NR_writev, __NR_pread64,
+	__NR_pwrite64, __NR_preadv, __NR_pwritev, __NR_readlinkat, __NR3264_fstatat,
+	__NR_fstat, __NR_personality, __NR_exit, __NR_exit_group, __NR_set_tid_address,
+	__NR_futex, __NR_set_robust_list, __NR_clock_gettime, __NR_clock_getres,
+	__NR_tgkill, __NR_rt_sigaction, __NR_rt_sigprocmask, __NR_rt_sigreturn,
+	__NR_getrlimit, __NR_prctl, __NR_gettimeofday, __NR_getpid, __NR_getuid,
+	__NR_geteuid, __NR_getgid, __NR_getegid, __NR_gettid, __NR_socket, __NR_connect,
+	__NR_brk, __NR_munmap, __NR_mremap, __NR_clone, __NR_mmap, __NR_mprotect,
+	__NR_rt_tgsigqueueinfo, __NR_prlimit64, __NR_getrandom, __NR_rt_sigqueueinfo,
+	__NR_rt_sigpending,
+	0, /* null terminated */
+};
+#endif
 
 #ifdef CONFIG_COMPAT
 static int mode1_syscalls_32[] = {
@@ -675,6 +697,20 @@ u32 seccomp_phase1(struct seccomp_data *sd)
 	if (config_enabled(CONFIG_CHECKPOINT_RESTORE) &&
 	    unlikely(current->ptrace & PT_SUSPEND_SECCOMP))
 		return SECCOMP_PHASE1_OK;
+
+#ifdef CONFIG_DBT
+	/* We open a backdoor for 64bit syscalls from  dbt tasks, because we do
+	 * not know if it is from the host, which should be allowed
+	 */
+	if (current->mm->dbt_syscalled && !current_thread_info()->dbt_syscall) {
+		int *syscall_whitelist = dbt_syscalls;
+
+		do {
+			if (*syscall_whitelist == this_syscall)
+				return SECCOMP_PHASE1_OK;
+		} while (*++syscall_whitelist);
+	}
+#endif
 
 	switch (mode) {
 	case SECCOMP_MODE_STRICT:

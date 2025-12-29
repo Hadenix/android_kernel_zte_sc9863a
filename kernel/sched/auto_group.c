@@ -119,6 +119,16 @@ bool task_wants_autogroup(struct task_struct *p, struct task_group *tg)
 	return true;
 }
 
+void sched_autogroup_exit_task(struct task_struct *p)
+{
+	/*
+	 * We are going to call exit_notify() and autogroup_move_group() can't
+	 * see this thread after that: we can no longer use signal->autogroup.
+	 * See the PF_EXITING check in task_wants_autogroup().
+	 */
+	sched_move_task(p);
+}
+
 static void
 autogroup_move_group(struct task_struct *p, struct autogroup *ag)
 {

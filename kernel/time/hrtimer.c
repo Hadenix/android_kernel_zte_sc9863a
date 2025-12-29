@@ -1200,6 +1200,20 @@ bool hrtimer_active(const struct hrtimer *timer)
 }
 EXPORT_SYMBOL_GPL(hrtimer_active);
 
+#ifdef CONFIG_SPRD_EIRQSOFF
+extern bool is_tick_sched_timer(void *fn);
+static int __read_mostly hrtimer_latency_monitor = 20; /*ms*/
+static int __init hrtimer_latency_monitor_setup(char *str)
+{
+	get_option(&str, &hrtimer_latency_monitor);
+	if (hrtimer_latency_monitor < 10)
+		hrtimer_latency_monitor = 10;
+	pr_info("SPRDBG: hrtimer monitor latency set to %d ms\n",
+		hrtimer_latency_monitor);
+	return 0;
+}
+early_param("hrtimer_latency_monitor", hrtimer_latency_monitor_setup);
+#endif
 /*
  * The write_seqcount_barrier()s in __run_hrtimer() split the thing into 3
  * distinct sections:
@@ -1224,6 +1238,9 @@ static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base,
 {
 	enum hrtimer_restart (*fn)(struct hrtimer *);
 	int restart;
+#ifdef CONFIG_SPRD_EIRQSOFF
+	u64 jiff_s = 0;
+#endif
 
 	lockdep_assert_held(&cpu_base->lock);
 
@@ -1258,7 +1275,23 @@ static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base,
 	 */
 	raw_spin_unlock(&cpu_base->lock);
 	trace_hrtimer_expire_entry(timer, now);
+#ifdef CONFIG_SPRD_EIRQSOFF
+	if (!is_tick_sched_timer(fn))
+		jiff_s = get_jiffies_64();
+#endif
 	restart = fn(timer);
+#ifdef CONFIG_SPRD_EIRQSOFF
+	if (!is_tick_sched_timer(fn)) {
+		jiff_s = jiffies_to_msecs(get_jiffies_64()-jiff_s);
+		if (jiff_s > hrtimer_latency_monitor)
+			pr_warn("SPRDDBG: Timer[%p] set by[%d/%s] func[%pS] execute[%lld ms]\n",
+#ifdef CONFIG_TIMER_STATS
+				timer, timer->start_pid, timer->start_comm, fn, jiff_s);
+#else
+				timer, 0, "", fn, jiff_s);
+#endif
+	}
+#endif
 	trace_hrtimer_expire_exit(timer);
 	raw_spin_lock(&cpu_base->lock);
 

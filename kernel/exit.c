@@ -62,6 +62,10 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+#include <linux/boost_sigkill_free.h>
+#endif
+
 static void exit_mm(struct task_struct *tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -712,6 +716,9 @@ void do_exit(long code)
 	 */
 	smp_mb();
 	raw_spin_unlock_wait(&tsk->pi_lock);
+#ifdef CONFIG_SWAP_ZDATA
+	exit_proc_reclaim(tsk);
+#endif
 
 	if (unlikely(in_atomic())) {
 		pr_info("note: %s[%d] exited with preempt_count %d\n",
@@ -763,6 +770,7 @@ void do_exit(long code)
 	 */
 	perf_event_exit_task(tsk);
 
+	sched_autogroup_exit_task(tsk);
 	cgroup_exit(tsk);
 
 	/*
@@ -881,6 +889,10 @@ do_group_exit(int exit_code)
 		}
 		spin_unlock_irq(&sighand->siglock);
 	}
+#ifdef CONFIG_BOOST_SIGKILL_FREE
+	if (sysctl_boost_sigkill_free && sig_kernel_kill(exit_code))
+		fast_free_user_mem();
+#endif
 
 	do_exit(exit_code);
 	/* NOTREACHED */

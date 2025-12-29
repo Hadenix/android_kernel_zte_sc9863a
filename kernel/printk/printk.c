@@ -228,6 +228,7 @@ enum log_flags {
 	LOG_CONT	= 8,	/* text is a fragment of a continuation line */
 };
 
+#define TASK_COMM_LEN 16
 struct printk_log {
 	u64 ts_nsec;		/* timestamp in nanoseconds */
 	u16 len;		/* length of entire record */
@@ -236,6 +237,9 @@ struct printk_log {
 	u8 facility;		/* syslog facility */
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
+	u32 cpu;		/* the print cpu */
+	u32 pid;		/* the print pid */
+	char comm[TASK_COMM_LEN]; /* the print comm */
 };
 
 /*
@@ -427,7 +431,7 @@ static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
 static int log_store(int facility, int level,
 		     enum log_flags flags, u64 ts_nsec,
 		     const char *dict, u16 dict_len,
-		     const char *text, u16 text_len)
+		     const char *text, u16 text_len, int cpu)
 {
 	struct printk_log *msg;
 	u32 size, pad_len;
@@ -468,6 +472,9 @@ static int log_store(int facility, int level,
 	msg->facility = facility;
 	msg->level = level & 7;
 	msg->flags = flags & 0x1f;
+	msg->cpu = cpu;
+	strncpy(msg->comm, current->comm, TASK_COMM_LEN);
+	msg->pid = current->pid;
 	if (ts_nsec > 0)
 		msg->ts_nsec = ts_nsec;
 	else
@@ -1057,6 +1064,44 @@ static size_t print_time(u64 ts, char *buf)
 		       (unsigned long)ts, rem_nsec / 1000);
 }
 
+static bool printk_cpuid = IS_ENABLED(CONFIG_PRINTK_CPUID);
+module_param_named(cpuid, printk_cpuid, bool, S_IRUGO | S_IWUSR);
+
+static size_t print_cpu(u32 cpu, char *buf)
+{
+	if (!printk_cpuid)
+		return 0;
+
+	if (!buf)
+		return snprintf(NULL, 0, "c%d ", cpu);
+	return sprintf(buf, "c%d ", cpu);
+}
+
+static bool printk_comm = IS_ENABLED(CONFIG_PRINTK_COMM);
+module_param_named(comm, printk_comm, bool, S_IRUGO | S_IWUSR);
+
+static size_t print_comm(const char *comm, char *buf)
+{
+	if (!printk_comm)
+		return 0;
+
+	if (!buf)
+		return snprintf(NULL, 0, "[%s] ", comm);
+	return sprintf(buf, "[%s] ", comm);
+}
+
+static bool printk_pid = IS_ENABLED(CONFIG_PRINTK_PID);
+module_param_named(pid, printk_pid, bool, S_IRUGO | S_IWUSR);
+
+static size_t print_pid(u32 pid, char *buf)
+{
+	if (!printk_pid)
+		return 0;
+	if (!buf)
+		return snprintf(NULL, 0, "%5d ", pid);
+	return sprintf(buf, "%5d ", pid);
+}
+
 static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 {
 	size_t len = 0;
@@ -1077,6 +1122,9 @@ static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 	}
 
 	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
+	len += print_cpu(msg->cpu, buf? buf+len:NULL);
+	len += print_pid(msg->pid, buf ? buf+len:NULL);
+	len += print_comm(msg->comm, buf ? buf+len:NULL);
 	return len;
 }
 
@@ -1568,6 +1616,7 @@ static struct cont {
 	u8 facility;			/* log facility of first message */
 	enum log_flags flags;		/* prefix, newline flags */
 	bool flushed:1;			/* buffer sealed and committed */
+	u32 cpu;			/* the print cpu */
 } cont;
 
 static void cont_flush(enum log_flags flags)
@@ -1584,7 +1633,7 @@ static void cont_flush(enum log_flags flags)
 		 * line. LOG_NOCONS suppresses a duplicated output.
 		 */
 		log_store(cont.facility, cont.level, flags | LOG_NOCONS,
-			  cont.ts_nsec, NULL, 0, cont.buf, cont.len);
+			  cont.ts_nsec, NULL, 0, cont.buf, cont.len, cont.cpu);
 		cont.flags = flags;
 		cont.flushed = true;
 	} else {
@@ -1593,7 +1642,7 @@ static void cont_flush(enum log_flags flags)
 		 * just submit it to the store and free the buffer.
 		 */
 		log_store(cont.facility, cont.level, flags, 0,
-			  NULL, 0, cont.buf, cont.len);
+			  NULL, 0, cont.buf, cont.len, cont.cpu);
 		cont.len = 0;
 	}
 }
@@ -1621,6 +1670,7 @@ static bool cont_add(int facility, int level, const char *text, size_t len)
 		cont.flags = 0;
 		cont.cons = 0;
 		cont.flushed = false;
+		cont.cpu = smp_processor_id();
 	}
 
 	memcpy(cont.buf + cont.len, text, len);
@@ -1719,7 +1769,8 @@ asmlinkage int vprintk_emit(int facility, int level,
 		/* emit KERN_CRIT message */
 		printed_len += log_store(0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
 					 NULL, 0, recursion_msg,
-					 strlen(recursion_msg));
+					 strlen(recursion_msg),
+					 smp_processor_id());
 	}
 
 	/*
@@ -1782,7 +1833,8 @@ asmlinkage int vprintk_emit(int facility, int level,
 		else
 			printed_len += log_store(facility, level,
 						 lflags | LOG_CONT, 0,
-						 dict, dictlen, text, text_len);
+						 dict, dictlen, text, text_len,
+						 smp_processor_id());
 	} else {
 		bool stored = false;
 
@@ -1805,7 +1857,8 @@ asmlinkage int vprintk_emit(int facility, int level,
 			printed_len += text_len;
 		else
 			printed_len += log_store(facility, level, lflags, 0,
-						 dict, dictlen, text, text_len);
+						 dict, dictlen, text, text_len,
+						 smp_processor_id());
 	}
 
 	logbuf_cpu = UINT_MAX;

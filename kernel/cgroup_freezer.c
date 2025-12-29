@@ -450,6 +450,22 @@ static u64 freezer_parent_freezing_read(struct cgroup_subsys_state *css,
 	return (bool)(freezer->state & CGROUP_FREEZING_PARENT);
 }
 
+/* ZSW_ADD FOR CPUFREEZER begin */
+void  cgroup_task_unfree(struct task_struct *task)
+{
+	struct css_task_iter it;
+	struct task_struct *freetask;
+	struct freezer *freezer = task_freezer(task);
+
+	css_task_iter_start(&freezer->css, &it);
+	while ((freetask = css_task_iter_next(&it))) {
+		set_task_unfreezable(freetask);
+		wake_up_process(freetask);
+	}
+	css_task_iter_end(&it);
+}
+/* ZSW_ADD FOR CPUFREEZER end */
+
 static struct cftype files[] = {
 	{
 		.name = "state",

@@ -1013,7 +1013,7 @@ static enum hrtimer_restart rt_schedtune_timer(struct hrtimer *timer)
 	 */
 	rt_se->schedtune_enqueued = false;
 	schedtune_dequeue_task(p, cpu_of(rq));
-	cpufreq_update_this_cpu(rq, SCHED_CPUFREQ_RT);
+	cpufreq_update_util(rq, SCHED_CPUFREQ_RT);
 out:
 	raw_spin_unlock(&rq->lock);
 
@@ -1060,7 +1060,7 @@ static void update_curr_rt(struct rq *rq)
 		return;
 
 	/* Kick cpufreq (see the comment in kernel/sched/sched.h). */
-	cpufreq_update_this_cpu(rq, SCHED_CPUFREQ_RT);
+	cpufreq_update_util(rq, SCHED_CPUFREQ_RT);
 
 	schedstat_set(curr->se.statistics.exec_max,
 		      max(curr->se.statistics.exec_max, delta_exec));
@@ -1404,7 +1404,6 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 
 	rt_se->schedtune_enqueued = true;
 	schedtune_enqueue_task(p, cpu_of(rq));
-	cpufreq_update_this_cpu(rq, SCHED_CPUFREQ_RT);
 }
 
 static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
@@ -1428,7 +1427,6 @@ static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 
 	rt_se->schedtune_enqueued = false;
 	schedtune_dequeue_task(p, cpu_of(rq));
-	cpufreq_update_this_cpu(rq, SCHED_CPUFREQ_RT);
 }
 
 /*
@@ -1491,7 +1489,7 @@ static void schedtune_dequeue_rt(struct rq *rq, struct task_struct *p)
 	/* schedtune_enqueued is true, deboost it */
 	rt_se->schedtune_enqueued = false;
 	schedtune_dequeue_task(p, task_cpu(p));
-	cpufreq_update_this_cpu(rq, SCHED_CPUFREQ_RT);
+	cpufreq_update_util(rq, SCHED_CPUFREQ_RT);
 }
 
 static int
@@ -1500,6 +1498,9 @@ select_task_rq_rt(struct task_struct *p, int cpu, int sd_flag, int flags,
 {
 	struct task_struct *curr;
 	struct rq *rq;
+#ifdef CONFIG_INTEL_DWS
+	int do_find = 0;
+#endif
 
 	/* For anything but wake ups, just return the task_cpu */
 	if (sd_flag != SD_BALANCE_WAKE && sd_flag != SD_BALANCE_FORK)
@@ -1509,6 +1510,11 @@ select_task_rq_rt(struct task_struct *p, int cpu, int sd_flag, int flags,
 
 	rcu_read_lock();
 	curr = READ_ONCE(rq->curr); /* unlocked access */
+
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS) && dws_mask_cpu(cpu))
+		do_find = 1;
+#endif
 
 	/*
 	 * If the current task on @p's runqueue is an RT task, then
@@ -1532,9 +1538,15 @@ select_task_rq_rt(struct task_struct *p, int cpu, int sd_flag, int flags,
 	 * This test is optimistic, if we get it wrong the load-balancer
 	 * will have to sort it out.
 	 */
-	if (curr && unlikely(rt_task(curr)) &&
+#ifdef CONFIG_INTEL_DWS
+	if (do_find || (curr && unlikely(rt_task(curr)) &&
 	    (curr->nr_cpus_allowed < 2 ||
-	     curr->prio <= p->prio)) {
+	     curr->prio <= p->prio))) {
+#else
+	if (sched_feat(ENERGY_AWARE) || (curr && unlikely(rt_task(curr)) &&
+	    (curr->nr_cpus_allowed < 2 ||
+	     curr->prio <= p->prio))) {
+#endif
 		int target = find_lowest_rq(p);
 
 		/*
@@ -1749,6 +1761,18 @@ static struct task_struct *pick_highest_pushable_task(struct rq *rq, int cpu)
 	return NULL;
 }
 
+static inline unsigned long task_walt_util(struct task_struct *p)
+{
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_task_util) {
+		unsigned long demand = p->ravg.demand;
+
+		return (demand << 10) / walt_ravg_window;
+	}
+#endif
+	return 0;
+}
+
 static DEFINE_PER_CPU(cpumask_var_t, local_cpu_mask);
 
 static int find_lowest_rq(struct task_struct *task)
@@ -1757,6 +1781,7 @@ static int find_lowest_rq(struct task_struct *task)
 	struct cpumask *lowest_mask = this_cpu_cpumask_var_ptr(local_cpu_mask);
 	int this_cpu = smp_processor_id();
 	int cpu      = task_cpu(task);
+	int i;
 
 	/* Make sure the mask is initialized first */
 	if (unlikely(!lowest_mask))
@@ -1768,6 +1793,39 @@ static int find_lowest_rq(struct task_struct *task)
 	if (!cpupri_find(&task_rq(task)->rd->cpupri, task, lowest_mask))
 		return -1; /* No targets found */
 
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS)) {
+		rcu_read_lock();
+		sd = rcu_dereference(per_cpu(sd_dws, this_cpu));
+		if (sd)
+			dws_consolidated_cpus(sd, lowest_mask);
+		rcu_read_unlock();
+		if (!cpumask_weight(lowest_mask))
+			return -1;
+	}
+#endif
+
+	if (sched_feat(ENERGY_AWARE)) {
+		struct cpumask tmp_mask;
+
+		cpumask_and(&tmp_mask, lowest_mask, &min_cap_cpu_mask);
+		if (cpumask_weight(&tmp_mask)) {
+			int i;
+			unsigned long total_util = 0, total_cap = 0;
+
+			for_each_cpu(i, &tmp_mask) {
+				total_util += cpu_util(i);
+				total_cap += capacity_orig_of(i);
+			}
+			total_util += task_walt_util(task);
+			if (total_util * capacity_margin < total_cap * 1024)
+				cpumask_copy(lowest_mask, &tmp_mask);
+		}
+	}
+
+	for_each_cpu(i, lowest_mask)
+		if (idle_cpu(i))
+			return i;
 	/*
 	 * At this point we have built a mask of cpus representing the
 	 * lowest priority tasks in the system.  Now we want to elect
@@ -2196,6 +2254,10 @@ static void pull_rt_task(struct rq *this_rq)
 		return;
 	}
 #endif
+#ifdef CONFIG_INTEL_DWS
+	if (sched_feat(INTEL_DWS) && dws_mask_cpu(this_cpu))
+		return;
+#endif
 
 	for_each_cpu(cpu, this_rq->rd->rto_mask) {
 		if (this_cpu == cpu)
@@ -2213,6 +2275,12 @@ static void pull_rt_task(struct rq *this_rq)
 		if (src_rq->rt.highest_prio.next >=
 		    this_rq->rt.highest_prio.curr)
 			continue;
+
+		if (sched_feat(ENERGY_AWARE)) {
+			if (cpu_util(cpu) * capacity_margin <
+				capacity_orig_of(cpu) * 1024)
+				continue;
+		}
 
 		/*
 		 * We can potentially drop this_rq's lock in

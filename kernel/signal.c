@@ -44,10 +44,22 @@
 #include <asm/siginfo.h>
 #include <asm/cacheflush.h>
 #include "audit.h"	/* audit_signal_info() */
+#include <stdbool.h>
+
+#ifdef CONFIG_BOOST_KILL
+/* Add apportunity to config enable/disable boost
+ * killing action
+ */
+int sysctl_boost_killing __read_mostly;
+#endif
 
 /*
  * SLAB caches for signal bits.
  */
+
+#ifndef ZTE_FEATURE_CGROUP_FREEZER
+#define ZTE_FEATURE_CGROUP_FREEZER               false
+#endif
 
 static struct kmem_cache *sigqueue_cachep;
 
@@ -881,6 +893,9 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 {
 	struct signal_struct *signal = p->signal;
 	struct task_struct *t;
+#ifdef CONFIG_BOOST_KILL
+	cpumask_t new_mask = CPU_MASK_NONE;
+#endif
 
 	/*
 	 * Now find a thread we can wake up to take the signal off the queue.
@@ -937,6 +952,13 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 			signal->group_stop_count = 0;
 			t = p;
 			do {
+#ifdef CONFIG_BOOST_KILL
+				if (sysctl_boost_killing) {
+					if (can_nice(t, -20))
+						set_user_nice(t, -20);
+					arch_get_fast_cpus(&new_mask);
+				}
+#endif
 				task_clear_jobctl_pending(t, JOBCTL_PENDING_MASK);
 				sigaddset(&t->pending.signal, SIGKILL);
 				signal_wake_up(t, 1);
@@ -1092,8 +1114,106 @@ static int send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	from_ancestor_ns = si_fromuser(info) &&
 			   !task_pid_nr_ns(current, task_active_pid_ns(t));
 #endif
-
+/* ZSW_ADD FOR CPUFREEZER begin */
+#if ZTE_FEATURE_CGROUP_FREEZER == true
+	if (sig == SIGKILL) {
+		if (t->flags & PF_FROZEN) {
+			cgroup_task_unfree(t);
+		}
+	}
+#endif
+/* ZSW_ADD FOR CPUFREEZER end */
 	return __send_signal(sig, info, t, group, from_ancestor_ns);
+}
+
+#define DUMP_DATA_NUM 64
+static void print_user_log(int signr)
+{
+#ifdef CONFIG_X86
+	struct pt_regs *regs = signal_pt_regs();
+	printk(KERN_INFO "potentially unexpected fatal signal %d. [print_user_log] user_mode(regs)=%d\n",
+		signr, user_mode(regs));
+
+	if (user_mode(regs) && (signr == 11)) {
+		printk(KERN_INFO "code at-- %08lx: ", regs->ip);
+		{
+			int i;
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->ip + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+		}
+
+		printk(KERN_CONT "\n");
+
+		if ((regs->ax & 0xffff7f0000000000) == 0x7f0000000000) {
+			int i;
+			printk(KERN_CONT "[ax]: ");
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->ax + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+			printk(KERN_CONT "\n");
+		}
+
+		if ((regs->bx & 0xffff7f0000000000) == 0x7f0000000000) {
+			int i;
+			printk(KERN_CONT "[bx]: ");
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->bx + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+			printk(KERN_CONT "\n");
+		}
+
+		wbinvd();
+
+		printk(KERN_INFO "code at- %08lx: ", regs->ip);
+		{
+			int i;
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->ip + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+		}
+
+		printk(KERN_CONT "\n");
+
+		if ((regs->ax & 0xffff7f0000000000) == 0x7f0000000000) {
+			int i;
+			printk(KERN_CONT "[ax-]: ");
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->ax + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+			printk(KERN_CONT "\n");
+		}
+
+		if ((regs->bx & 0xffff7f0000000000) == 0x7f0000000000) {
+			int i;
+			printk(KERN_CONT "[bx-]: ");
+			for (i = 0; i < DUMP_DATA_NUM; i++) {
+				unsigned char insn;
+				if (get_user(insn, (unsigned char *)(regs->bx + i)))
+					break;
+				printk(KERN_CONT "%02x ", insn);
+			}
+			printk(KERN_CONT "\n");
+		}
+
+	}
+#endif
+	return;
 }
 
 static void print_fatal_signal(int signr)
@@ -1766,6 +1886,13 @@ static inline int may_ptrace_stop(void)
 
 	return 1;
 }
+#ifdef CONFIG_SWAP_ZDATA
+int reclaim_sigusr_pending(struct task_struct *tsk)
+{
+	return	sigismember(&tsk->pending.signal, SIGUSR2) ||
+		sigismember(&tsk->signal->shared_pending.signal, SIGUSR2);
+}
+#endif
 
 /*
  * Return non-zero if there is a SIGKILL that should be waking us up.
@@ -2301,8 +2428,10 @@ relock:
 		current->flags |= PF_SIGNALED;
 
 		if (sig_kernel_coredump(signr)) {
-			if (print_fatal_signals)
+			if (print_fatal_signals) {
+				print_user_log(ksig->info.si_signo);
 				print_fatal_signal(ksig->info.si_signo);
+			}
 			proc_coredump_connector(current);
 			/*
 			 * If it was able to dump core, this kills all
