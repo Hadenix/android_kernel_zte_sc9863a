@@ -157,7 +157,12 @@ extern void hardpps(const struct timespec64 *, const struct timespec64 *);
 int read_current_timer(unsigned long *timer_val);
 void ntp_notify_cmos_timer(void);
 
-/* The clock frequency of the i8253/i8254 PIT */
+#ifdef CONFIG_X86
+extern unsigned long pit_freq;
+#define PIT_TICK_RATE pit_freq
+#else
+/* The clock frequency of the i8253/i8254 PIT default 1193182ul */
 #define PIT_TICK_RATE 1193182ul
+#endif
 
 #endif /* LINUX_TIMEX_H */

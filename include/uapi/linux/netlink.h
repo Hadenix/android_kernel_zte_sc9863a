@@ -27,6 +27,9 @@
 #define NETLINK_ECRYPTFS	19
 #define NETLINK_RDMA		20
 #define NETLINK_CRYPTO		21	/* Crypto layer */
+#ifdef CONFIG_IODEBUG
+#define NETLINK_IODEBUG		29	/* IOdebug */
+#endif
 
 #define NETLINK_INET_DIAG	NETLINK_SOCK_DIAG
 

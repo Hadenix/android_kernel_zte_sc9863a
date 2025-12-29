@@ -24,12 +24,14 @@
 /* hwspinlock mode argument */
 #define HWLOCK_IRQSTATE	0x01	/* Disable interrupts, save state */
 #define HWLOCK_IRQ	0x02	/* Disable interrupts, don't save state */
+#define HWLOCK_NO_SWLOCK	0x03		/*Only get hardware lock*/
 
 struct device;
 struct device_node;
 struct hwspinlock;
 struct hwspinlock_device;
 struct hwspinlock_ops;
+struct device_node;
 
 /**
  * struct hwspinlock_pdata - platform data for hwspinlock drivers
@@ -66,6 +68,9 @@ int hwspin_lock_register(struct hwspinlock_device *bank, struct device *dev,
 int hwspin_lock_unregister(struct hwspinlock_device *bank);
 struct hwspinlock *hwspin_lock_request(void);
 struct hwspinlock *hwspin_lock_request_specific(unsigned int id);
+struct hwspinlock *hwspin_lock_get_used(unsigned int id);
+struct hwspinlock *of_hwspin_lock_request(struct device_node *np,
+					  const char *name);
 int hwspin_lock_free(struct hwspinlock *hwlock);
 int of_hwspin_lock_get_id(struct device_node *np, int index);
 int hwspin_lock_get_id(struct hwspinlock *hwlock);
@@ -95,6 +100,17 @@ static inline struct hwspinlock *hwspin_lock_request(void)
 }
 
 static inline struct hwspinlock *hwspin_lock_request_specific(unsigned int id)
+{
+	return ERR_PTR(-ENODEV);
+}
+
+static inline struct hwspinlock *hwspin_lock_get_used(unsigned int id)
+{
+	return ERR_PTR(-ENODEV);
+}
+
+static inline struct hwspinlock *of_hwspin_lock_request(struct device_node *np,
+							const char *name)
 {
 	return ERR_PTR(-ENODEV);
 }
@@ -173,6 +189,25 @@ int hwspin_trylock_irqsave(struct hwspinlock *hwlock, unsigned long *flags)
 static inline int hwspin_trylock_irq(struct hwspinlock *hwlock)
 {
 	return __hwspin_trylock(hwlock, HWLOCK_IRQ, NULL);
+}
+
+/**
+ * hwspin_trylock() - attempt to lock a specific hwspinlock without
+ * software lock protection
+ * @hwlock: an hwspinlock which we want to trylock
+ *
+ * This function attempts to lock an hwspinlock without spinlock protection,
+ * in order to solve scheduling problems in atomic contents during taking
+ * the hwspinlock.
+ *
+ * Note: User must add one software lock to ensure exclusive hwspinlock.
+ *
+ * Returns 0 if we successfully locked the hwspinlock, -EBUSY if
+ * the hwspinlock was already taken, and -EINVAL if @hwlock is invalid.
+ */
+static inline int hwspin_trylock_no_swlock(struct hwspinlock *hwlock)
+{
+	return __hwspin_trylock(hwlock, HWLOCK_NO_SWLOCK, NULL);
 }
 
 /**
@@ -268,6 +303,26 @@ int hwspin_lock_timeout(struct hwspinlock *hwlock, unsigned int to)
 }
 
 /**
+ * hwspin_lock_no_swlock_timeout() - lock an hwspinlock with timeout
+ * limit and no software lock
+ * @hwlock: the hwspinlock to be locked
+ * @to: timeout value in msecs
+ *
+ * @hwlock. If the @hwlock is already taken, the function will busy loop
+ * waiting for it to be released, but give up when @timeout msecs have
+ * elapsed.
+ *
+ * Note: Before calling this interface , the caller must already get a
+ * software lock.
+ */
+static inline
+int hwspin_lock_no_swlock_timeout(struct hwspinlock *hwlock,
+				unsigned int to)
+{
+	return __hwspin_lock_timeout(hwlock, to, HWLOCK_NO_SWLOCK, NULL);
+}
+
+/**
  * hwspin_unlock_irqrestore() - unlock hwspinlock, restore irq state
  * @hwlock: a previously-acquired hwspinlock which we want to unlock
  * @flags: previous caller's interrupt state to restore
@@ -299,6 +354,20 @@ static inline void hwspin_unlock_irqrestore(struct hwspinlock *hwlock,
 static inline void hwspin_unlock_irq(struct hwspinlock *hwlock)
 {
 	__hwspin_unlock(hwlock, HWLOCK_IRQ, NULL);
+}
+
+/**
+ * hwspin_unlock_no_swlock() - unlock hwspinlock, without software
+ * lock protection
+ * @hwlock: a previously-acquired hwspinlock which we want to unlock
+ *
+ * This function will unlock a specific hwspinlock.
+ *
+ * @hwlock must be already locked before calling this function
+ */
+static inline void hwspin_unlock_no_swlock(struct hwspinlock *hwlock)
+{
+	__hwspin_unlock(hwlock, HWLOCK_NO_SWLOCK, NULL);
 }
 
 /**

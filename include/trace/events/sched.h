@@ -612,6 +612,32 @@ TRACE_EVENT(sched_wake_idle_without_ipi,
 	TP_printk("cpu=%d", __entry->cpu)
 );
 
+#ifdef CONFIG_64BIT_ONLY_CPU
+TRACE_EVENT(sched_load_per_bitwidth,
+
+	TP_PROTO(int cpu, unsigned long load, unsigned long load32),
+
+	TP_ARGS(cpu, load, load32),
+
+	TP_STRUCT__entry(
+		__field(int, cpu)
+		__field(unsigned long, load)
+		__field(unsigned long, load32)
+	),
+
+	TP_fast_assign(
+		__entry->cpu   = cpu;
+		__entry->load = load;
+		__entry->load32 = load32;
+	),
+
+	TP_printk("cpu=%d load_total=%lu load_32bit=%lu",
+			__entry->cpu,
+			__entry->load,
+			__entry->load32)
+);
+#endif
+
 TRACE_EVENT(sched_contrib_scale_f,
 
 	TP_PROTO(int cpu, unsigned long freq_scale_factor,
@@ -661,7 +687,7 @@ TRACE_EVENT(sched_load_avg_task,
 		__field( unsigned long,	load_avg		)
 		__field( unsigned long,	util_avg		)
 		__field( unsigned long,	util_avg_pelt	)
-		__field( unsigned long,	util_avg_walt	)
+		__field( u64,	util_avg_walt	)
 		__field( u64,		load_sum		)
 		__field( u32,		util_sum		)
 		__field( u32,		period_contrib		)
@@ -679,14 +705,14 @@ TRACE_EVENT(sched_load_avg_task,
 		__entry->util_avg_pelt  = avg->util_avg;
 		__entry->util_avg_walt  = 0;
 #ifdef CONFIG_SCHED_WALT
-		__entry->util_avg_walt = (((unsigned long)((struct ravg*)_ravg)->demand) << SCHED_LOAD_SHIFT);
+		__entry->util_avg_walt = (((u64)((struct ravg*)_ravg)->demand) << SCHED_LOAD_SHIFT);
 		do_div(__entry->util_avg_walt, walt_ravg_window);
 		if (!walt_disabled && sysctl_sched_use_walt_task_util)
-			__entry->util_avg = __entry->util_avg_walt;
+			__entry->util_avg = (unsigned long)__entry->util_avg_walt;
 #endif
 	),
 	TP_printk("comm=%s pid=%d cpu=%d load_avg=%lu util_avg=%lu "
-			"util_avg_pelt=%lu util_avg_walt=%lu load_sum=%llu"
+			"util_avg_pelt=%lu util_avg_walt=%llu load_sum=%llu"
 		  " util_sum=%u period_contrib=%u",
 		  __entry->comm,
 		  __entry->pid,
@@ -714,7 +740,10 @@ TRACE_EVENT(sched_load_avg_cpu,
 		__field( unsigned long,	load_avg		)
 		__field( unsigned long,	util_avg		)
 		__field( unsigned long,	util_avg_pelt	)
-		__field( unsigned long,	util_avg_walt	)
+		__field( unsigned long, util_avg_walt_cravg		)
+		__field( unsigned long, util_avg_walt_cwind		)
+		__field( unsigned long, util_avg_walt_prevrun	)
+		__field( unsigned long, util_avg_walt_currun	)
 	),
 
 	TP_fast_assign(
@@ -722,20 +751,36 @@ TRACE_EVENT(sched_load_avg_cpu,
 		__entry->load_avg		= cfs_rq->avg.load_avg;
 		__entry->util_avg		= cfs_rq->avg.util_avg;
 		__entry->util_avg_pelt	= cfs_rq->avg.util_avg;
-		__entry->util_avg_walt	= 0;
+		__entry->util_avg_walt_cravg	= 0;
+		__entry->util_avg_walt_cwind	= 0;
+		__entry->util_avg_walt_prevrun	= 0;
+		__entry->util_avg_walt_currun	= 0;
 #ifdef CONFIG_SCHED_WALT
-		__entry->util_avg_walt =
+		__entry->util_avg_walt_cravg =
 				div64_u64(cpu_rq(cpu)->cumulative_runnable_avg,
 						  walt_ravg_window >> SCHED_LOAD_SHIFT);
+		__entry->util_avg_walt_cwind =
+				div64_u64(cpu_rq(cpu)->cum_window_demand,
+						  walt_ravg_window >> SCHED_LOAD_SHIFT);
+		__entry->util_avg_walt_prevrun =
+				div64_u64(cpu_rq(cpu)->prev_runnable_sum,
+						  walt_ravg_window >> SCHED_LOAD_SHIFT);
+		__entry->util_avg_walt_currun =
+				div64_u64(cpu_rq(cpu)->curr_runnable_sum,
+						  walt_ravg_window >> SCHED_LOAD_SHIFT);
 		if (!walt_disabled && sysctl_sched_use_walt_cpu_util)
-			__entry->util_avg		= __entry->util_avg_walt;
+			__entry->util_avg		= __entry->util_avg_walt_cravg;
 #endif
 	),
 
 	TP_printk("cpu=%d load_avg=%lu util_avg=%lu "
-			  "util_avg_pelt=%lu util_avg_walt=%lu",
+			  "util_avg_pelt=%lu util_avg_walt_cravg=%lu "
+			  "util_avg_walt_cwind=%lu util_avg_walt_prevrun=%lu "
+			  "util_avg_walt_currun=%lu",
 		  __entry->cpu, __entry->load_avg, __entry->util_avg,
-		  __entry->util_avg_pelt, __entry->util_avg_walt)
+		  __entry->util_avg_pelt, __entry->util_avg_walt_cravg,
+		  __entry->util_avg_walt_cwind, __entry->util_avg_walt_prevrun,
+		  __entry->util_avg_walt_currun)
 );
 
 /*

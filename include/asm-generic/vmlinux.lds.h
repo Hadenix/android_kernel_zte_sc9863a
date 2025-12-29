@@ -167,7 +167,7 @@
 #define OF_TABLE(cfg, name)	__OF_TABLE(config_enabled(cfg), name)
 #define _OF_TABLE_0(name)
 #define _OF_TABLE_1(name)						\
-	. = ALIGN(8);							\
+	. = ALIGN(64);							\
 	VMLINUX_SYMBOL(__##name##_of_table) = .;			\
 	*(__##name##_of_table)						\
 	*(__##name##_of_table_end)

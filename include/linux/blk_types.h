@@ -169,6 +169,7 @@ enum rq_flag_bits {
 				 * throttling rules. Don't do it again. */
 
 	/* request only flags */
+	__REQ_NOENCRYPT,	/* ok to not encrypt */
 	__REQ_SORTED,		/* elevator knows about this request */
 	__REQ_SOFTBARRIER,	/* may not be passed by ioscheduler */
 	__REQ_NOMERGE,		/* don't touch this for merging */
@@ -204,6 +205,7 @@ enum rq_flag_bits {
 #define REQ_WRITE_SAME		(1ULL << __REQ_WRITE_SAME)
 #define REQ_NOIDLE		(1ULL << __REQ_NOIDLE)
 #define REQ_INTEGRITY		(1ULL << __REQ_INTEGRITY)
+#define REQ_NOENCRYPT		(1ULL << __REQ_NOENCRYPT)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)

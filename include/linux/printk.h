@@ -57,8 +57,10 @@ static inline void console_silent(void)
 
 static inline void console_verbose(void)
 {
+#if 0
 	if (console_loglevel)
 		console_loglevel = CONSOLE_LOGLEVEL_MOTORMOUTH;
+#endif
 }
 
 struct va_format {

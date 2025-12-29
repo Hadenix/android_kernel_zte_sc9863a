@@ -418,6 +418,8 @@ struct address_space_operations {
 	 */
 	int (*migratepage) (struct address_space *,
 			struct page *, struct page *, enum migrate_mode);
+	bool (*isolate_page)(struct page *, isolate_mode_t);
+	void (*putback_page)(struct page *);
 	int (*launder_page) (struct page *);
 	int (*is_partially_uptodate) (struct page *, unsigned long,
 					unsigned long);
@@ -2823,7 +2825,10 @@ extern void inode_set_flags(struct inode *inode, unsigned int flags,
 extern const struct file_operations generic_ro_fops;
 
 #define special_file(m) (S_ISCHR(m)||S_ISBLK(m)||S_ISFIFO(m)||S_ISSOCK(m))
-
+#ifdef CONFIG_EXT4_RESERVE_SPACE_FILTER
+extern bool check_have_permission(int log_print);
+#endif
+/* TODO: add a inline function to have less MACRO in .c file */
 extern int readlink_copy(char __user *, int, const char *);
 extern int page_readlink(struct dentry *, char __user *, int);
 extern const char *page_follow_link_light(struct dentry *, void **);

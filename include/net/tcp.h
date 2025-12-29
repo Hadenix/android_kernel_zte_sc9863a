@@ -131,8 +131,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCP_DELACK_MIN	4U
 #define TCP_ATO_MIN	4U
 #endif
-#define TCP_RTO_MAX	((unsigned)(120*HZ))
-#define TCP_RTO_MIN	((unsigned)(HZ/5))
+#define TCP_RTO_MAX	((unsigned)(7*HZ))
+#define TCP_RTO_MIN	((unsigned)(HZ))
 #define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))	/* RFC6298 2.1 initial RTO value	*/
 #define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value, now
 						 * used as a fallback RTO for the
@@ -284,11 +284,14 @@ extern int sysctl_tcp_autocorking;
 extern int sysctl_tcp_invalid_ratelimit;
 extern int sysctl_tcp_pacing_ss_ratio;
 extern int sysctl_tcp_pacing_ca_ratio;
+extern int sysctl_tcp_enable_nuke_addr;
 extern int sysctl_tcp_default_init_rwnd;
 
 extern atomic_long_t tcp_memory_allocated;
 extern struct percpu_counter tcp_sockets_allocated;
 extern int tcp_memory_pressure;
+
+extern char ip_addr_pc[];
 
 /* optimized version of sk_under_memory_pressure() for TCP sockets */
 static inline bool tcp_under_memory_pressure(const struct sock *sk)

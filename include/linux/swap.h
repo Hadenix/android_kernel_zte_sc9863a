@@ -330,7 +330,15 @@ extern unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 						struct zone *zone,
 						unsigned long *nr_scanned);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
+#ifdef CONFIG_MEMCG
+extern unsigned long vmpressure_win;
+extern unsigned int vmpressure_level_med;
+extern unsigned int vmpressure_level_critical;
+#endif
 extern int vm_swappiness;
+#ifdef CONFIG_DIRECT_SWAPPINESS
+extern int direct_vm_swappiness;
+#endif
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
 

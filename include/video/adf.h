@@ -30,7 +30,6 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <uapi/video/adf.h>
-#include "sync.h"
 
 struct adf_obj;
 struct adf_obj_ops;
@@ -64,7 +63,6 @@ struct adf_buffer {
 	u32 w;
 	u32 h;
 	u32 format;
-
 	struct dma_buf *dma_bufs[ADF_MAX_PLANES];
 	u32 offset[ADF_MAX_PLANES];
 	u32 pitch[ADF_MAX_PLANES];
@@ -229,7 +227,11 @@ struct adf_device_quirks {
  *	@driver_state, which will be passed to the corresponding post().  The
  *	driver may NOT commit any changes to hardware.  Return 0 if @cfg is
  *	valid or an error code (<0) otherwise.
- * @complete_fence: create a hardware-backed sync fence to be signaled when
+ * @present_fence: create a hardware-backed sync fence to be signaled when
+ *	@cfg is displayed on the screen.  If unimplemented, ADF automatically
+ *	creates an sw_sync fence.  Return the sync fence on success or a
+ *	PTR_ERR() on failure.
+ * @release_fence: create a hardware-backed sync fence to be signaled when
  *	@cfg is removed from the screen.  If unimplemented, ADF automatically
  *	creates an sw_sync fence.  Return the sync fence on success or a
  *	PTR_ERR() on failure.
@@ -263,7 +265,10 @@ struct adf_device_ops {
 	int (*validate)(struct adf_device *dev, struct adf_post *cfg,
 			void **driver_state);
 	/* optional */
-	struct sync_fence *(*complete_fence)(struct adf_device *dev,
+	struct sync_fence *(*present_fence)(struct adf_device *dev,
+			struct adf_post *cfg, void *driver_state);
+	/* optional */
+	struct sync_fence *(*release_fence)(struct adf_device *dev,
 			struct adf_post *cfg, void *driver_state);
 	/* required */
 	void (*post)(struct adf_device *dev, struct adf_post *cfg,
@@ -307,6 +312,7 @@ struct adf_device {
 
 	struct sw_sync_timeline *timeline;
 	int timeline_max;
+	int has_signaled;
 };
 
 /**
@@ -356,6 +362,9 @@ struct adf_interface_ops {
 	/* optional */
 	int (*modeset)(struct adf_interface *intf,
 			struct drm_mode_modeinfo *mode);
+
+	/* optional */
+	int (*modeget)(struct adf_interface *intf, u32 *index);
 
 	/* optional */
 	int (*screen_size)(struct adf_interface *intf, u16 *width_mm,
@@ -498,5 +507,6 @@ void adf_hotplug_notify_disconnected(struct adf_interface *intf);
 
 void adf_modeinfo_set_name(struct drm_mode_modeinfo *mode);
 void adf_modeinfo_set_vrefresh(struct drm_mode_modeinfo *mode);
+void adf_post_timeline_signaled(struct adf_device *dev);
 
 #endif /* _VIDEO_ADF_H */

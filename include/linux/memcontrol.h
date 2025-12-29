@@ -69,6 +69,7 @@ enum mem_cgroup_events_index {
 	MEMCG_HIGH,
 	MEMCG_MAX,
 	MEMCG_OOM,
+	MEMCG_PROTECT,
 	MEMCG_NR_EVENTS,
 };
 
@@ -200,6 +201,9 @@ struct mem_cgroup {
 	unsigned long low;
 	unsigned long high;
 
+	/* protect reclaim limit */
+	unsigned long protect;
+
 	unsigned long soft_limit;
 
 	/* vmpressure notifications */
@@ -299,7 +303,15 @@ static inline void mem_cgroup_events(struct mem_cgroup *memcg,
 	cgroup_file_notify(&memcg->events_file);
 }
 
+static inline void protect_hit_count(struct mem_cgroup *memcg,
+		       enum mem_cgroup_events_index idx,
+		       unsigned int nr)
+{
+	this_cpu_add(memcg->stat->events[idx], nr);
+}
+
 bool mem_cgroup_low(struct mem_cgroup *root, struct mem_cgroup *memcg);
+bool memory_under_protect(struct mem_cgroup *root, struct mem_cgroup *memcg);
 
 int mem_cgroup_try_charge(struct page *page, struct mm_struct *mm,
 			  gfp_t gfp_mask, struct mem_cgroup **memcgp);
@@ -515,6 +527,18 @@ static inline void mem_cgroup_events(struct mem_cgroup *memcg,
 
 static inline bool mem_cgroup_low(struct mem_cgroup *root,
 				  struct mem_cgroup *memcg)
+{
+	return false;
+}
+
+static inline void protect_hit_count(struct mem_cgroup *memcg,
+				     enum mem_cgroup_events_index idx,
+				     unsigned int nr)
+{
+}
+
+static inline bool memory_under_protect(struct mem_cgroup *root,
+					struct mem_cgroup *memcg)
 {
 	return false;
 }

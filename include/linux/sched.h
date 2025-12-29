@@ -1026,6 +1026,9 @@ extern void wake_up_q(struct wake_q_head *head);
 #define SD_OVERLAP		0x2000	/* sched_domains of this level overlap */
 #define SD_NUMA			0x4000	/* cross-node balancing */
 #define SD_SHARE_CAP_STATES	0x8000  /* Domain members share capacity state */
+#ifdef CONFIG_INTEL_DWS
+#define SD_INTEL_DWS		0x10000	/* Intel DWS */
+#endif
 
 #ifdef CONFIG_SCHED_SMT
 static inline int cpu_smt_flags(void)
@@ -1179,6 +1182,13 @@ struct sched_domain {
 		void *private;		/* used during construction */
 		struct rcu_head rcu;	/* used during destruction */
 	};
+
+#ifdef CONFIG_INTEL_DWS
+	unsigned int total_groups;		/* total group number */
+	unsigned int group_number;		/* this CPU's group sequence */
+	unsigned int dws_tf;			/* consolidating degree */
+	struct sched_group *first_group;	/* ordered by CPU number */
+#endif
 
 	unsigned int span_weight;
 	/*
@@ -1362,7 +1372,7 @@ struct sched_statistics {
 #endif
 
 #ifdef CONFIG_SCHED_WALT
-#define RAVG_HIST_SIZE_MAX  5
+#define RAVG_HIST_SIZE_MAX  8
 
 /* ravg represents frequency scaled cpu-demand of tasks */
 struct ravg {
@@ -1534,6 +1544,14 @@ struct tlbflush_unmap_batch {
 	 */
 	bool writable;
 };
+
+#ifdef CONFIG_SWAP_ZDATA
+struct reclaim_result {
+	unsigned nr_reclaimed;
+	unsigned nr_writedblock;
+	s64 elapsed_centisecs64;
+};
+#endif
 
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
@@ -2012,6 +2030,9 @@ struct task_struct {
 	unsigned long	task_state_change;
 #endif
 	int pagefault_disabled;
+#ifdef CONFIG_SWAP_ZDATA
+	struct reclaim_result *proc_reclaimed_result;
+#endif
 /* CPU-specific state of this task */
 	struct thread_struct thread;
 /*
@@ -2296,6 +2317,9 @@ extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, 
 #define PF_MUTEX_TESTER	0x20000000	/* Thread belongs to the rt mutex tester */
 #define PF_FREEZER_SKIP	0x40000000	/* Freezer should not count it as freezable */
 #define PF_SUSPEND_TASK 0x80000000      /* this thread called freeze_processes and should not be frozen */
+/* ZSW_ADD FOR CPUFREEZER begin */
+#define PF_BINDER_NOFROZE 0x02000000	/* do not freeze the task */
+/* ZSW_ADD FOR CPUFREEZER end */
 
 /*
  * Only the _current_ task can read/write to tsk->flags, but other
@@ -2562,6 +2586,7 @@ extern void sched_autogroup_create_attach(struct task_struct *p);
 extern void sched_autogroup_detach(struct task_struct *p);
 extern void sched_autogroup_fork(struct signal_struct *sig);
 extern void sched_autogroup_exit(struct signal_struct *sig);
+extern void sched_autogroup_exit_task(struct task_struct *p);
 #ifdef CONFIG_PROC_FS
 extern void proc_sched_autogroup_show_task(struct task_struct *p, struct seq_file *m);
 extern int proc_sched_autogroup_set_nice(struct task_struct *p, int nice);
@@ -2571,6 +2596,7 @@ static inline void sched_autogroup_create_attach(struct task_struct *p) { }
 static inline void sched_autogroup_detach(struct task_struct *p) { }
 static inline void sched_autogroup_fork(struct signal_struct *sig) { }
 static inline void sched_autogroup_exit(struct signal_struct *sig) { }
+static inline void sched_autogroup_exit_task(struct task_struct *p) { }
 #endif
 
 extern int yield_to(struct task_struct *p, bool preempt);
@@ -3459,6 +3485,15 @@ static inline unsigned long rlimit_max(unsigned int limit)
 {
 	return task_rlimit_max(current, limit);
 }
+
+#ifdef CONFIG_BOOST_KILL
+#ifndef arch_get_fast_cpus
+static inline void arch_get_fast_cpus(struct cpumask *cpumask)
+{
+	cpumask_copy(cpumask, cpu_possible_mask);
+}
+#endif
+#endif
 
 #define SCHED_CPUFREQ_RT        (1U << 0)
 #define SCHED_CPUFREQ_DL        (1U << 1)

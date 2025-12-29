@@ -87,6 +87,10 @@ struct coresight_dev_subtype {
  * struct coresight_platform_data - data harvested from the DT specification
  * @cpu:	the CPU a source belongs to. Only applicable for ETM/PTMs.
  * @name:	name of the component as shown under sysfs.
+ * @inports:	list of remote endpoint port number.
+ * @parent_names:name of all parent components connected to this device.
+ * @parent_ports:parent component port number the current component is
+		connected  to.
  * @nr_inport:	number of input ports for this component.
  * @outports:	list of remote endpoint port number.
  * @child_names:name of all child components connected to this device.
@@ -98,6 +102,9 @@ struct coresight_dev_subtype {
 struct coresight_platform_data {
 	int cpu;
 	const char *name;
+	int *inports;
+	const char **parent_names;
+	int *parent_ports;
 	int nr_inport;
 	int *outports;
 	const char **child_names;
@@ -128,6 +135,9 @@ struct coresight_desc {
 
 /**
  * struct coresight_connection - representation of a single connection
+ * @inport:	a connection's input port number.
+ * @parent_name:	remote component's name.
+ * @parent_port:	remote component's port number @input is connected to.
  * @outport:	a connection's output port number.
  * @chid_name:	remote component's name.
  * @child_port:	remote component's port number @output is connected to.
@@ -135,10 +145,14 @@ struct coresight_desc {
 		connected to @outport.
  */
 struct coresight_connection {
+	int inport;
+	const char *parent_name;
+	int parent_port;
 	int outport;
 	const char *child_name;
 	int child_port;
 	struct coresight_device *child_dev;
+	struct coresight_device *parent_dev;
 };
 
 /**
@@ -172,6 +186,7 @@ struct coresight_device {
 	bool orphan;
 	bool enable;	/* true only if configured as part of a path */
 	bool activated;	/* true only if a sink is part of a path */
+	int cpu;
 };
 
 #define to_coresight_device(d) container_of(d, struct coresight_device, dev)

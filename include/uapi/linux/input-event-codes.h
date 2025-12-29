@@ -611,6 +611,24 @@
 #define KEY_KBDINPUTASSIST_ACCEPT		0x264
 #define KEY_KBDINPUTASSIST_CANCEL		0x265
 
+/* add by wangkuihua for touch gesture begin */
+#define KEY_GESTURE_DOUBLEC		0x2a0
+#define KEY_GESTURE_L			0x2a1
+#define KEY_GESTURE_DOWN		0x2a2
+#define KEY_GESTURE_U			0x2a3
+#define KEY_GESTURE_UP			0x2a4
+#define KEY_GESTURE_C			0x2a5
+#define KEY_GESTURE_E			0x2a6
+#define KEY_GESTURE_M			0x2a7
+#define KEY_GESTURE_LEFT		0x2a8
+#define KEY_GESTURE_RIGHT		0x2a9
+#define KEY_GESTURE_S			0x2aa
+#define KEY_GESTURE_W			0x2ab
+#define KEY_GESTURE_V			0x2ac
+#define KEY_GESTURE_O			0x2ad
+#define KEY_GESTURE_Z			0x2ae
+/* add by wangkuihua for touch gesture end */
+
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
 #define BTN_TRIGGER_HAPPY2		0x2c1

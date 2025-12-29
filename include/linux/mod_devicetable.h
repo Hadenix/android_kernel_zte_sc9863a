@@ -235,7 +235,7 @@ struct of_device_id {
 	char	type[32];
 	char	compatible[128];
 	const void *data;
-};
+} __attribute__((aligned(64)));
 
 /* VIO */
 struct vio_device_id {

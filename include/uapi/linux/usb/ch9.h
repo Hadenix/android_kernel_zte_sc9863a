@@ -973,15 +973,16 @@ enum usb_device_speed {
 	USB_SPEED_HIGH,				/* usb 2.0 */
 	USB_SPEED_WIRELESS,			/* wireless (usb 2.5) */
 	USB_SPEED_SUPER,			/* usb 3.0 */
-	USB_SPEED_SUPER_PLUS,			/* usb 3.1 */
 };
 
 
 enum usb_device_state {
+	USB_STATE_REMOVED = 0,
+
 	/* NOTATTACHED isn't in the USB spec, and this state acts
 	 * the same as ATTACHED ... but it's clearer this way.
 	 */
-	USB_STATE_NOTATTACHED = 0,
+	USB_STATE_NOTATTACHED,
 
 	/* chapter 9 and authentication (wireless) device states */
 	USB_STATE_ATTACHED,

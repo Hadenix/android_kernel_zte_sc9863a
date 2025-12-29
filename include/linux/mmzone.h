@@ -60,6 +60,9 @@ enum {
 #ifdef CONFIG_MEMORY_ISOLATION
 	MIGRATE_ISOLATE,	/* can't allocate from here */
 #endif
+#ifdef CONFIG_DETOUR_MEM
+	MIGRATE_DETOUR,
+#endif
 	MIGRATE_TYPES
 };
 
@@ -69,6 +72,16 @@ enum {
 #else
 #  define is_migrate_cma(migratetype) false
 #  define is_migrate_cma_page(_page) false
+#endif
+
+#ifdef CONFIG_DETOUR_MEM
+#  define is_migrate_detour(migratetype)	    \
+	unlikely((migratetype) == MIGRATE_DETOUR)
+#  define is_migrate_detour_page(_page)		    \
+	(get_pageblock_migratetype(_page) == MIGRATE_DETOUR)
+#else
+#  define is_migrate_detour(migratetype) false
+#  define is_migrate_detour_page(_page) false
 #endif
 
 #define for_each_migratetype_order(order, type) \
@@ -160,6 +173,7 @@ enum zone_stat_item {
 	WORKINGSET_NODERECLAIM,
 	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_FREE_CMA_PAGES,
+	NR_FREE_DETOUR_PAGES,
 	NR_VM_ZONE_STAT_ITEMS };
 
 /*

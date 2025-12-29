@@ -86,6 +86,10 @@ struct writeback_control {
 	unsigned for_reclaim:1;		/* Invoked from the page allocator */
 	unsigned range_cyclic:1;	/* range_start is cyclic */
 	unsigned for_sync:1;		/* sync(2) WB_SYNC_ALL writeback */
+#ifdef CONFIG_SWAP_ZDATA
+	bool ishibernation_rec;
+	unsigned nr_writedblock;  /*the number of blocks that was writebacked*/
+#endif
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct bdi_writeback *wb;	/* wb this writeback is issued under */
 	struct inode *inode;		/* inode being written out */
@@ -224,6 +228,7 @@ static inline void inode_attach_wb(struct inode *inode, struct page *page)
 static inline void inode_detach_wb(struct inode *inode)
 {
 	if (inode->i_wb) {
+		WARN_ON_ONCE(!(inode->i_state & I_CLEAR));
 		wb_put(inode->i_wb);
 		inode->i_wb = NULL;
 	}

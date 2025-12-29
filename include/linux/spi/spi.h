@@ -325,6 +325,7 @@ static inline void spi_unregister_driver(struct spi_driver *sdrv)
  * @cur_msg_prepared: spi_prepare_message was called for the currently
  *                    in-flight message
  * @cur_msg_mapped: message has been mapped for DMA
+ * @no_idle: device no need to enter idle state to unprepare hardware
  * @xfer_completion: used by core transfer_one_message()
  * @busy: message pump is busy
  * @running: message pump is running
@@ -496,6 +497,7 @@ struct spi_master {
 	bool				auto_runtime_pm;
 	bool                            cur_msg_prepared;
 	bool				cur_msg_mapped;
+	bool				no_idle;
 	struct completion               xfer_completion;
 	size_t				max_dma_len;
 

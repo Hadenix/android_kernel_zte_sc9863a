@@ -169,4 +169,10 @@ extern void sdio_f0_writeb(struct sdio_func *func, unsigned char b,
 extern mmc_pm_flag_t sdio_get_host_pm_caps(struct sdio_func *func);
 extern int sdio_set_host_pm_flags(struct sdio_func *func, mmc_pm_flag_t flags);
 
+extern int sdio_memcpy_fromio_no_incraddr(struct sdio_func *func, u8 *buf,
+	unsigned int addr, int size);
+
+extern int sdio_memcpy_toio_no_incraddr(struct sdio_func *func,
+	unsigned int addr, void *buf, int size);
+
 #endif /* LINUX_MMC_SDIO_FUNC_H */

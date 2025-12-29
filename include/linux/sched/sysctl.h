@@ -34,6 +34,9 @@ enum { sysctl_hung_task_timeout_secs = 0 };
 #define DEFAULT_MAX_MAP_COUNT	(USHRT_MAX - MAPCOUNT_ELF_CORE_MARGIN)
 
 extern int sysctl_max_map_count;
+#ifdef CONFIG_BOOST_KILL
+extern int sysctl_boost_killing;
+#endif
 
 extern unsigned int sysctl_sched_latency;
 extern unsigned int sysctl_sched_min_granularity;
@@ -46,6 +49,13 @@ extern unsigned int sysctl_sched_use_walt_cpu_util;
 extern unsigned int sysctl_sched_use_walt_task_util;
 extern unsigned int sysctl_sched_walt_init_task_load_pct;
 extern unsigned int sysctl_sched_walt_cpu_high_irqload;
+extern unsigned int busy_threshold;
+#endif
+
+#ifdef CONFIG_INTEL_DWS
+#ifdef CONFIG_SMP
+extern unsigned int sysctl_sched_wakeup_threshold;
+#endif
 #endif
 
 enum sched_tunable_scaling {
@@ -66,6 +76,7 @@ extern unsigned int sysctl_sched_migration_cost;
 extern unsigned int sysctl_sched_nr_migrate;
 extern unsigned int sysctl_sched_time_avg;
 extern unsigned int sysctl_sched_shares_window;
+extern unsigned int capacity_margin;
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length,

@@ -34,6 +34,10 @@ void of_reserved_mem_device_release(struct device *dev);
 void fdt_init_reserved_mem(void);
 void fdt_reserved_mem_save_node(unsigned long node, const char *uname,
 			       phys_addr_t base, phys_addr_t size);
+#ifdef CONFIG_DETOUR_MEM
+extern struct reserved_mem reserved_mem[];
+extern int reserved_mem_count;
+#endif
 #else
 static inline int of_reserved_mem_device_init(struct device *dev)
 {

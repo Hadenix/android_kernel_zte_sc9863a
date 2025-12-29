@@ -6,6 +6,9 @@
 #include <linux/stddef.h>
 #include <linux/linkage.h>
 #include <linux/topology.h>
+#ifdef CONFIG_PAGE_RECORDER
+#include <linux/kmempagerecorder.h>
+#endif
 
 struct vm_area_struct;
 
@@ -456,12 +459,40 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 #define alloc_hugepage_vma(gfp_mask, vma, addr, order)	\
 	alloc_pages_vma(gfp_mask, order, vma, addr, numa_node_id(), true)
 #else
+
+#ifndef CONFIG_PAGE_RECORDER
 #define alloc_pages(gfp_mask, order) \
 		alloc_pages_node(numa_node_id(), gfp_mask, order)
 #define alloc_pages_vma(gfp_mask, order, vma, addr, node, false)\
 	alloc_pages(gfp_mask, order)
 #define alloc_hugepage_vma(gfp_mask, vma, addr, order)	\
 	alloc_pages(gfp_mask, order)
+#else /* CONFIG_PAGE_RECORDER */
+static inline struct page *
+alloc_pages(gfp_t gfp_mask, unsigned int order)
+{
+	/* Hook to ION Debugger - for Casper */
+	struct page *tmp_page = alloc_pages_node(numa_node_id(),
+						 gfp_mask, order);
+	if (!in_interrupt())
+		record_page_record((void *)tmp_page, order);
+	else if (gfp_mask & __GFP_HIGH) {
+		printk("[WARNING]can't use alloc_pages function without "
+		       "GFP_ATOMIC mask in interruption function!!!\n");
+	}
+	return tmp_page;
+}
+
+#define alloc_pages_vma(gfp_mask, order, vma, addr, node, false)\
+	alloc_pages_without_record(gfp_mask, order)
+#define alloc_hugepage_vma(gfp_mask, vma, addr, order)	\
+	alloc_pages_without_record(gfp_mask, order)
+
+#define alloc_pages_without_record(gfp_mask, order) \
+		alloc_pages_node(numa_node_id(), gfp_mask, order)
+#define alloc_page_without_record(gfp_mask) alloc_pages_without_record( \
+		gfp_mask, 0)
+#endif /* CONFIG_PAGE_RECORDER */
 #endif
 #define alloc_page(gfp_mask) alloc_pages(gfp_mask, 0)
 #define alloc_page_vma(gfp_mask, vma, addr)			\
@@ -501,6 +532,56 @@ extern void free_kmem_pages(unsigned long addr, unsigned int order);
 
 #define __free_page(page) __free_pages((page), 0)
 #define free_page(addr) free_pages((addr), 0)
+
+#ifdef CONFIG_PAGE_RECORDER
+extern unsigned long __get_free_pages_without_record(gfp_t gfp_mask,
+						  unsigned int order);
+extern unsigned long get_zeroed_page_without_record(gfp_t gfp_mask);
+
+#define __get_free_page_without_record(gfp_mask) \
+		__get_free_pages_without_record((gfp_mask), 0)
+
+extern void __free_pages_without_record(struct page *page, unsigned int order);
+extern void free_pages_without_record(unsigned long addr, unsigned int order);
+
+#define __free_page_without_record(page) __free_pages_without_record((page), 0)
+#define free_page_without_record(addr) free_pages_without_record((addr), 0)
+
+/*
+ *page record redefine the based allocate/free memory functions, which add
+ *backtrace records, but some case should be excluded. the functions that don't
+ *record backtrace  are changed.
+ */
+#define alloc_pages_dont_record(page, order)  \
+		alloc_pages_without_record((page), (order))
+#define alloc_page_dont_record(page)   alloc_page_without_record(page)
+
+#define __get_free_pages_dont_record(gfp_mask, order) \
+		__get_free_pages_without_record((gfp_mask), (order))
+#define __get_free_page_dont_record(gfp_mask)  \
+		__get_free_page_without_record(gfp_mask)
+
+#define __free_pages_dont_record(page, order)  \
+		__free_pages_without_record((page), (order))
+#define __free_page_dont_record(page)  __free_page_without_record(page)
+
+#define free_pages_dont_record(addr, order)  \
+		free_pages_without_record((addr), (order))
+#define free_page_dont_record(addr)  free_page_without_record(addr)
+#else
+#define alloc_pages_dont_record(page, order)  alloc_pages((page), (order))
+#define alloc_page_dont_record(page)   alloc_page(page)
+
+#define __get_free_pages_dont_record(gfp_mask, order)  \
+		__get_free_pages((gfp_mask), (order))
+#define __get_free_page_dont_record(gfp_mask)  __get_free_page(gfp_mask)
+
+#define __free_pages_dont_record(page, order)  __free_pages((page), (order))
+#define __free_page_dont_record(page)  __free_page(page)
+
+#define free_pages_dont_record(addr, order)  free_pages((addr), (order))
+#define free_page_dont_record(addr)  free_page(addr)
+#endif
 
 void page_alloc_init(void);
 void drain_zone_pages(struct zone *zone, struct per_cpu_pages *pcp);
@@ -549,6 +630,10 @@ extern void free_contig_range(unsigned long pfn, unsigned nr_pages);
 /* CMA stuff */
 extern void init_cma_reserved_pageblock(struct page *page);
 
+#endif
+#ifdef CONFIG_DETOUR_MEM
+extern void init_detour_reserved(struct page *page,
+				unsigned long count);
 #endif
 
 #endif /* __LINUX_GFP_H */

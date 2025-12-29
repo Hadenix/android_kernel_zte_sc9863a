@@ -206,13 +206,18 @@ struct regmap_config {
 	int pad_bits;
 	int val_bits;
 
+	unsigned long reg_addr;
+	unsigned setclr_offset;
 	bool (*writeable_reg)(struct device *dev, unsigned int reg);
 	bool (*readable_reg)(struct device *dev, unsigned int reg);
 	bool (*volatile_reg)(struct device *dev, unsigned int reg);
 	bool (*precious_reg)(struct device *dev, unsigned int reg);
 	regmap_lock lock;
 	regmap_unlock unlock;
+	regmap_lock hw_lock;
+	regmap_unlock hw_unlock;
 	void *lock_arg;
+	void *hw_lock_arg;
 
 	int (*reg_read)(void *context, unsigned int reg, unsigned int *val);
 	int (*reg_write)(void *context, unsigned int reg, unsigned int val);
@@ -674,6 +679,7 @@ int regmap_reinit_cache(struct regmap *map,
 struct regmap *dev_get_regmap(struct device *dev, const char *name);
 struct device *regmap_get_device(struct regmap *map);
 int regmap_write(struct regmap *map, unsigned int reg, unsigned int val);
+int regmap_hwlock_write(struct regmap *map, unsigned int reg, unsigned int val);
 int regmap_write_async(struct regmap *map, unsigned int reg, unsigned int val);
 int regmap_raw_write(struct regmap *map, unsigned int reg,
 		     const void *val, size_t val_len);
@@ -692,6 +698,8 @@ int regmap_raw_read(struct regmap *map, unsigned int reg,
 int regmap_bulk_read(struct regmap *map, unsigned int reg, void *val,
 		     size_t val_count);
 int regmap_update_bits(struct regmap *map, unsigned int reg,
+		       unsigned int mask, unsigned int val);
+int regmap_hwlock_update_bits(struct regmap *map, unsigned int reg,
 		       unsigned int mask, unsigned int val);
 int regmap_write_bits(struct regmap *map, unsigned int reg,
 		       unsigned int mask, unsigned int val);

@@ -17,6 +17,7 @@
 #include <linux/kobject.h>
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
+#include <linux/smp.h>
 #include <linux/sysfs.h>
 
 /*********************************************************************
@@ -75,6 +76,7 @@ struct cpufreq_policy {
 					 * governors are used */
 	unsigned int		restore_freq; /* = policy->cur before transition */
 	unsigned int		suspend_freq; /* freq to set during suspend */
+	unsigned int		target_freq; /* freq that the policy wants to set */
 
 	unsigned int		policy; /* see above */
 	unsigned int		last_policy; /* policy before unplug */
@@ -92,6 +94,7 @@ struct cpufreq_policy {
 	struct list_head        policy_list;
 	struct kobject		kobj;
 	struct completion	kobj_unregister;
+	struct notifier_block pm_qos_freq_nb;
 
 	/*
 	 * The rules for this semaphore:
@@ -126,6 +129,15 @@ struct cpufreq_policy {
 	 */
 	unsigned int		up_transition_delay_us;
 	unsigned int		down_transition_delay_us;
+
+	/*
+	 * Remote DVFS flag (Not added to the driver structure as we don't want
+	 * to access another structure from scheduler hotpath).
+	 *
+	 * Should be set if CPUs can do DVFS on behalf of other CPUs from
+	 * different cpufreq policies.
+	 */
+	bool			dvfs_possible_from_any_cpu;
 
 	 /* Cached frequency lookup from cpufreq_driver_resolve_freq. */
 	unsigned int cached_target_freq;
@@ -178,6 +190,7 @@ extern struct kobject *cpufreq_global_kobject;
 unsigned int cpufreq_get(unsigned int cpu);
 unsigned int cpufreq_quick_get(unsigned int cpu);
 unsigned int cpufreq_quick_get_max(unsigned int cpu);
+unsigned int cpufreq_quick_get_target(unsigned int cpu);
 void disable_cpufreq(void);
 
 u64 get_cpu_idle_time(unsigned int cpu, u64 *wall, int io_busy);
@@ -525,6 +538,9 @@ extern struct cpufreq_governor cpufreq_gov_conservative;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE)
 extern struct cpufreq_governor cpufreq_gov_interactive;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_interactive)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_SPRDEMAND)
+extern struct cpufreq_governor cpufreq_gov_sprdemand;
+#define CPUFREQ_DEFAULT_GOVERNOR        (&cpufreq_gov_sprdemand)
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_SCHED)
 extern struct cpufreq_governor cpufreq_gov_sched;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_sched)
@@ -563,6 +579,17 @@ struct governor_attr {
 	ssize_t (*store)(struct gov_attr_set *attr_set, const char *buf,
 			 size_t count);
 };
+
+static inline bool cpufreq_can_do_remote_dvfs(struct cpufreq_policy *policy)
+{
+	/*
+	 * Allow remote callbacks if:
+	 * - dvfs_possible_from_any_cpu flag is set
+	 * - the local and remote CPUs share cpufreq policy
+	 */
+	return policy->dvfs_possible_from_any_cpu ||
+		cpumask_test_cpu(smp_processor_id(), policy->cpus);
+}
 
 /*********************************************************************
  *                     FREQUENCY TABLE HELPERS                       *

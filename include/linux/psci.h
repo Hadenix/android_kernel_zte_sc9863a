@@ -36,6 +36,10 @@ struct psci_operations {
 
 extern struct psci_operations psci_ops;
 
+#if defined(CONFIG_SPRD_PMIC_WATCHDOG)
+extern unsigned int reboot_mode_flag;
+#endif
+
 #if defined(CONFIG_ARM_PSCI_FW)
 int __init psci_dt_init(void);
 #else

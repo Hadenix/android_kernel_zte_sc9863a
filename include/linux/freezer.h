@@ -78,6 +78,11 @@ static inline bool cgroup_freezing(struct task_struct *task)
 }
 #endif /* !CONFIG_CGROUP_FREEZER */
 
+/* ZSW_ADD FOR CPUFREEZER begin */
+extern void set_task_unfreezable(struct task_struct *p);
+extern void cgroup_task_unfree(struct task_struct *task);
+/* ZSW_ADD FOR CPUFREEZER end */
+
 /*
  * The PF_FREEZER_SKIP flag should be set by a vfork parent right before it
  * calls wait_for_completion(&vfork) and reset right after it returns from this

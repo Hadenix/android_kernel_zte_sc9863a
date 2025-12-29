@@ -408,6 +408,8 @@ struct mm_struct {
 #endif
 	unsigned long mmap_base;		/* base of mmap area */
 	unsigned long mmap_legacy_base;         /* base of mmap area in bottom-up allocations */
+	unsigned long mmap_guest_base;		/* base of dbt guest mmap area */
+	unsigned long dbt_syscalled;		/* DBT syscall called flag (old brk) */
 	unsigned long task_size;		/* size of task vm space */
 	unsigned long highest_vm_end;		/* highest vma end address */
 	pgd_t * pgd;

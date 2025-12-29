@@ -13,6 +13,8 @@ struct gpio_desc;
  * @desc:		label that will be attached to button's gpio
  * @type:		input event type (%EV_KEY, %EV_SW, %EV_ABS)
  * @wakeup:		configure the button as a wake-up source
+ * @level_trigger:	set default trigger type to level-trigger
+ *					instead of edge-trigger
  * @debounce_interval:	debounce ticks interval in msecs
  * @can_disable:	%true indicates that userspace is allowed to
  *			disable button via sysfs
@@ -27,6 +29,7 @@ struct gpio_keys_button {
 	const char *desc;
 	unsigned int type;
 	int wakeup;
+	int level_trigger;
 	int debounce_interval;
 	bool can_disable;
 	int value;
