@@ -5899,6 +5899,11 @@ W:	http://www.melware.de
 S:	Maintained
 F:	drivers/isdn/hardware/eicon/
 
+SPRD_ISOC PLATFORM SUPPORT
+M:	Fernando Guzman Lugo <fernando.guzman.lugo@intel.com>
+S:	Supported
+F:	arch/x86/platform/sprd-isoc
+
 IT87 HARDWARE MONITORING DRIVER
 M:	Jean Delvare <jdelvare@suse.com>
 L:	linux-hwmon@vger.kernel.org
@@ -11834,6 +11839,11 @@ W:	http://linuxtv.org
 T:	git git://linuxtv.org/media_tree.git
 S:	Maintained
 F:	drivers/media/tuners/tuner-xc2028.*
+
+X86 MOBILEVISOR INTERFACE
+M:     CPEG <cpeg_butter_gerrit@intel.com>
+S:     Supported
+F:     arch/x86/mobilevisor/
 
 XEN HYPERVISOR INTERFACE
 M:	Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
