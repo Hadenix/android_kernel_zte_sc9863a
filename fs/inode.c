@@ -922,6 +922,13 @@ void lockdep_annotate_inode_mutex_key(struct inode *inode)
 			/*
 			 * ensure nobody is actually holding i_mutex
 			 */
+			if (unlikely(mutex_is_locked(&inode->i_mutex))) {
+				pr_info("filesystem=[%s], pid=%d[%s], i_ino=%ld\n",
+					type->name, current->pid, current->comm,
+					inode->i_ino);
+				WARN_ON(1);
+				return;
+			}
 			mutex_destroy(&inode->i_mutex);
 			mutex_init(&inode->i_mutex);
 			lockdep_set_class(&inode->i_mutex,

@@ -405,7 +405,7 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 			int copied;
 
 			if (!page) {
-				page = alloc_page(GFP_HIGHUSER);
+				page = alloc_page_dont_record(GFP_HIGHUSER);
 				if (unlikely(!page)) {
 					ret = ret ? : -ENOMEM;
 					break;
@@ -653,7 +653,7 @@ void free_pipe_info(struct pipe_inode_info *pipe)
 			buf->ops->release(pipe, buf);
 	}
 	if (pipe->tmp_page)
-		__free_page(pipe->tmp_page);
+		__free_page_dont_record(pipe->tmp_page);
 	kfree(pipe->bufs);
 	kfree(pipe);
 }

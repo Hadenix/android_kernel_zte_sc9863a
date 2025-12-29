@@ -138,6 +138,14 @@ struct pid_entry {
 		NULL, &proc_single_file_operations,	\
 		{ .proc_show = show } )
 
+#ifdef CONFIG_SYSTEM_MODIFY_OOM_ADJ
+/* ANDROID is for special files in /proc. */
+#define ANDROID(NAME, MODE, OTYPE)			\
+	NOD(NAME, (S_IFREG|(MODE)),			\
+		&proc_##OTYPE##_inode_operations,	\
+		&proc_##OTYPE##_operations, {})
+#endif
+
 /*
  * Count the number of hardlinks for the pid_entry table, excluding the .
  * and .. links.
@@ -1131,6 +1139,37 @@ out:
 	return err < 0 ? err : count;
 }
 
+#ifdef CONFIG_SYSTEM_MODIFY_OOM_ADJ
+static int oom_adjust_permission(struct inode *inode, int mask)
+{
+	kuid_t uid;
+	struct task_struct *p;
+
+	p = get_proc_task(inode);
+	if (p) {
+		uid = task_uid(p);
+		put_task_struct(p);
+	}
+
+	/*
+	 * System Server (uid == 1000) is granted access to oom_adj of all
+	 * android applications (uid > 10000) as and services (uid >= 1000)
+	 */
+	if (p && (__kuid_val(current_fsuid()) == (uid_t)1000)
+		&& (__kuid_val(uid) >= (uid_t)1000)) {
+		if (inode->i_mode >> 6 & mask)
+			return 0;
+	}
+
+	/* Fall back to default. */
+	return generic_permission(inode, mask);
+}
+
+static const struct inode_operations proc_oom_adj_inode_operations = {
+	.permission	= oom_adjust_permission,
+};
+#endif
+
 static const struct file_operations proc_oom_adj_operations = {
 	.read		= oom_adj_read,
 	.write		= oom_adj_write,
@@ -1206,10 +1245,12 @@ static ssize_t oom_score_adj_write(struct file *file, const char __user *buf,
 		goto err_sighand;
 	}
 
-	task->signal->oom_score_adj = (short)oom_score_adj;
-	if (has_capability_noaudit(current, CAP_SYS_RESOURCE))
-		task->signal->oom_score_adj_min = (short)oom_score_adj;
-	trace_oom_score_adj_update(task);
+	if (task->tgid == task->pid) {
+		task->signal->oom_score_adj = (short)oom_score_adj;
+		if (has_capability_noaudit(current, CAP_SYS_RESOURCE))
+			task->signal->oom_score_adj_min = (short)oom_score_adj;
+		trace_oom_score_adj_update(task);
+	}
 
 err_sighand:
 	unlock_task_sighand(task, &flags);
@@ -2884,6 +2925,12 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("mounts",     S_IRUGO, proc_mounts_operations),
 	REG("mountinfo",  S_IRUGO, proc_mountinfo_operations),
 	REG("mountstats", S_IRUSR, proc_mountstats_operations),
+#ifdef CONFIG_PROCESS_RECLAIM
+	REG("reclaim", S_IWUSR, proc_reclaim_operations),
+#ifdef CONFIG_SWAP_ZDATA
+	ONE("reclaim_result",      S_IRUSR, process_reclaim_result_read),
+#endif
+#endif
 #ifdef CONFIG_PROC_PAGE_MONITOR
 	REG("clear_refs", S_IWUSR, proc_clear_refs_operations),
 	REG("smaps",      S_IRUGO, proc_pid_smaps_operations),
@@ -2911,7 +2958,11 @@ static const struct pid_entry tgid_base_stuff[] = {
 	ONE("cgroup",  S_IRUGO, proc_cgroup_show),
 #endif
 	ONE("oom_score",  S_IRUGO, proc_oom_score),
+#ifdef CONFIG_SYSTEM_MODIFY_OOM_ADJ
+	ANDROID("oom_adj", S_IRUGO|S_IWUSR, oom_adj),
+#else
 	REG("oom_adj",    S_IRUGO|S_IWUSR, proc_oom_adj_operations),
+#endif
 	REG("oom_score_adj", S_IRUGO|S_IWUSR, proc_oom_score_adj_operations),
 #ifdef CONFIG_AUDITSYSCALL
 	REG("loginuid",   S_IWUSR|S_IRUGO, proc_loginuid_operations),

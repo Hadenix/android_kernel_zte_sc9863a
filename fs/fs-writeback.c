@@ -28,6 +28,9 @@
 #include <linux/tracepoint.h>
 #include <linux/device.h>
 #include <linux/memcontrol.h>
+#ifdef CONFIG_IODEBUG_BDI
+#include <linux/iodebug.h>
+#endif
 #include "internal.h"
 
 /*
@@ -188,6 +191,10 @@ static void wb_queue_work(struct bdi_writeback *wb,
 			  struct wb_writeback_work *work)
 {
 	trace_writeback_queue(wb, work);
+
+#ifdef CONFIG_IODEBUG_BDI
+	iodebug_bdi_save_reason(work->reason);
+#endif
 
 	if (work->done)
 		atomic_inc(&work->done->cnt);
@@ -1592,6 +1599,12 @@ static long writeback_sb_inodes(struct super_block *sb,
 				break;
 		}
 	}
+
+#ifdef CONFIG_IODEBUG_BDI
+	iodebug_bdi_save_pages(dev_name(wb->bdi->dev),
+			wrote);
+#endif
+
 	return wrote;
 }
 
@@ -1804,6 +1817,10 @@ static long wb_check_background_flush(struct bdi_writeback *wb)
 			.reason		= WB_REASON_BACKGROUND,
 		};
 
+#ifdef CONFIG_IODEBUG_BDI
+		iodebug_bdi_save_reason(WB_REASON_BACKGROUND);
+#endif
+
 		return wb_writeback(wb, &work);
 	}
 
@@ -1838,6 +1855,9 @@ static long wb_check_old_data_flush(struct bdi_writeback *wb)
 			.reason		= WB_REASON_PERIODIC,
 		};
 
+#ifdef CONFIG_IODEBUG_BDI
+		iodebug_bdi_save_reason(WB_REASON_PERIODIC);
+#endif
 		return wb_writeback(wb, &work);
 	}
 
@@ -1903,6 +1923,9 @@ void wb_workfn(struct work_struct *work)
 		pages_written = writeback_inodes_wb(wb, 1024,
 						    WB_REASON_FORKER_THREAD);
 		trace_writeback_pages_written(pages_written);
+#ifdef CONFIG_IODEBUG_BDI
+		iodebug_bdi_save_reason(WB_REASON_FORKER_THREAD);
+#endif
 	}
 
 	if (!list_empty(&wb->work_list))

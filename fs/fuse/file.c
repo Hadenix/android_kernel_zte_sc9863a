@@ -17,6 +17,9 @@
 #include <linux/swap.h>
 #include <linux/falloc.h>
 #include <linux/uio.h>
+#ifdef CONFIG_IODEBUG_VFS
+#include <linux/iodebug.h>
+#endif
 
 static const struct file_operations fuse_direct_io_file_operations;
 
@@ -930,7 +933,11 @@ static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	struct fuse_conn *fc = get_fuse_conn(inode);
+	size_t ret;
 
+#ifdef CONFIG_IODEBUG_VFS
+	unsigned long jiffies_begin = jiffies;
+#endif
 	/*
 	 * In auto invalidate mode, always update attributes on read.
 	 * Otherwise, only update if we attempt to read past EOF (to ensure
@@ -944,7 +951,16 @@ static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			return err;
 	}
 
-	return generic_file_read_iter(iocb, to);
+	ret = generic_file_read_iter(iocb, to);
+
+#ifdef CONFIG_IODEBUG_VFS
+	if (ret > 0) {
+		iodebug_save_vfs_io(VFS_READ, ret, iocb->ki_filp, IS_FUSE,
+				(jiffies - jiffies_begin));
+	}
+#endif
+
+	return ret;
 }
 
 static void fuse_write_fill(struct fuse_req *req, struct fuse_file *ff,
@@ -1182,6 +1198,9 @@ static ssize_t fuse_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct inode *inode = mapping->host;
 	ssize_t err;
 	loff_t endbyte = 0;
+#ifdef CONFIG_IODEBUG_VFS
+	unsigned long jiffies_begin = jiffies;
+#endif
 
 	if (get_fuse_conn(inode)->writeback_cache) {
 		/* Update size (EOF optimization) and mode (SUID clearing) */
@@ -1243,6 +1262,13 @@ static ssize_t fuse_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 out:
 	current->backing_dev_info = NULL;
 	mutex_unlock(&inode->i_mutex);
+
+#ifdef CONFIG_IODEBUG_VFS
+	if (written > 0) {
+		iodebug_save_vfs_io(VFS_WRITE, written, file, IS_FUSE,
+					(jiffies - jiffies_begin));
+	}
+#endif
 
 	return written ? written : err;
 }

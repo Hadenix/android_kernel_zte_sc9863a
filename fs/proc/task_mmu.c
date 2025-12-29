@@ -14,11 +14,17 @@
 #include <linux/swapops.h>
 #include <linux/mmu_notifier.h>
 #include <linux/page_idle.h>
+#include <linux/mm_inline.h>
+#include <linux/ctype.h>
 
 #include <asm/elf.h>
 #include <asm/uaccess.h>
 #include <asm/tlbflush.h>
 #include "internal.h"
+
+#ifdef CONFIG_SWAP_ZDATA
+#include <linux/signal.h>
+#endif
 
 void task_mem(struct seq_file *m, struct mm_struct *mm)
 {
@@ -277,6 +283,19 @@ static int proc_maps_open(struct inode *inode, struct file *file,
 		return err;
 	}
 
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	priv->rss = 0;
+	priv->pss = 0;
+	priv->uss = 0;
+	priv->filecache_pss = 0;
+	priv->anonymous_pss = 0;
+	priv->filecache_uss = 0;
+	priv->anonymous_uss = 0;
+	priv->swap = 0;
+	priv->swap_pss = 0;
+	priv->swap_uss = 0;
+#endif
+
 	return 0;
 }
 
@@ -314,6 +333,29 @@ static int is_stack(struct proc_maps_private *priv,
 		vma->vm_end >= vma->vm_mm->start_stack;
 }
 
+/*
+* vma start at TASK_SIZE_32 while its mmap_base and start_stack start
+* within 4G should be droped, for the vma should belong to translator
+*/
+#ifdef CONFIG_DBT
+static int is_dbt_task_olimit(struct vm_area_struct *vma)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	unsigned long start;
+
+	if (!current_thread_info()->dbt_syscall)
+		return 0;
+	start = vma->vm_start;
+	if ((mm->mmap_base > TASK_SIZE_32)
+	    && (mm->start_stack < TASK_SIZE_32)
+	    && (start >= TASK_SIZE_32))
+		return 1;
+	return 0;
+}
+#else
+#define is_dbt_task_olimit(vma) (0)
+#endif
+
 static void
 show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 {
@@ -326,6 +368,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 	unsigned long start, end;
 	dev_t dev = 0;
 	const char *name = NULL;
+
+	if (is_dbt_task_olimit(vma))
+		return;
 
 	if (file) {
 		struct inode *inode = file_inode(vma->vm_file);
@@ -484,9 +529,62 @@ struct mem_size_stats {
 	unsigned long swap;
 	unsigned long shared_hugetlb;
 	unsigned long private_hugetlb;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	unsigned long filecache;
+	unsigned long shared_filecache;
+	unsigned long private_filecache;
+	unsigned long shared_anonymous;
+	unsigned long private_anonymous;
+	u64 pss_filecache;
+	u64 pss_anonymous;
+#endif
 	u64 pss;
 	u64 swap_pss;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	u64 swap_uss;
+#endif
 };
+
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+static void
+show_smap_vma_sum(struct seq_file *m, struct proc_maps_private *priv,
+		struct mem_size_stats *mss)
+{
+	/* This seq_printf will increases m->count */
+	seq_printf(m,
+		"Rss_All:                %8lu kB\n"
+		"Pss_All:                %8lu kB\n"
+		"Uss_All:                %8lu kB\n"
+		"Rss_Filecache_All:      %8lu kB\n"
+		"Rss_Anonymous_All:      %8lu kB\n"
+		"Pss_Filecache_All:      %8lu kB\n"
+		"Pss_Anonymous_All:      %8lu kB\n"
+		"Uss_Filecache_All:      %8lu kB\n"
+		"Uss_Anonymous_All:      %8lu kB\n"
+		"Swap_All:               %8lu kB\n"
+		"Swap_Pss_All:           %8lu kB\n"
+		"Swap_Uss_All:           %8lu kB\n",
+		(unsigned long)((priv->rss + mss->resident) >> 10),
+		(unsigned long)((priv->pss + mss->pss) >> (10 + PSS_SHIFT)),
+		(unsigned long)((priv->uss +
+				mss->private_clean + mss->private_dirty) >> 10),
+		(unsigned long)((priv->filecache_rss + mss->filecache) >> 10),
+		(unsigned long)((priv->anonymous_rss + mss->anonymous) >> 10),
+		(unsigned long)((priv->filecache_pss +
+				mss->pss_filecache) >> (10 + PSS_SHIFT)),
+		(unsigned long)((priv->anonymous_pss +
+				mss->pss_anonymous) >> (10 + PSS_SHIFT)),
+		(unsigned long)((priv->filecache_uss +
+				mss->private_filecache) >> 10),
+		(unsigned long)((priv->anonymous_uss +
+				mss->private_anonymous) >> 10),
+		(unsigned long)((priv->swap + mss->swap) >> 10),
+		(unsigned long)((priv->swap_pss +
+				mss->swap_pss) >> (10 + PSS_SHIFT)),
+		(unsigned long)((priv->swap_uss +
+				mss->swap_uss) >> (10 + PSS_SHIFT)));
+}
+#endif
 
 static void smaps_account(struct mem_size_stats *mss, struct page *page,
 		unsigned long size, bool young, bool dirty)
@@ -495,6 +593,10 @@ static void smaps_account(struct mem_size_stats *mss, struct page *page,
 
 	if (PageAnon(page))
 		mss->anonymous += size;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	else if (page_is_file_cache(page))
+		mss->filecache += size;
+#endif
 
 	mss->resident += size;
 	/* Accumulate the size in pages that have been accessed. */
@@ -511,12 +613,30 @@ static void smaps_account(struct mem_size_stats *mss, struct page *page,
 		pss_delta = (u64)size << PSS_SHIFT;
 		do_div(pss_delta, mapcount);
 		mss->pss += pss_delta;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		if (PageAnon(page)) {
+			mss->shared_anonymous += size;
+			mss->pss_anonymous += pss_delta;
+		} else if (page_is_file_cache(page)) {
+			mss->shared_filecache += size;
+			mss->pss_filecache += pss_delta;
+		}
+#endif
 	} else {
 		if (dirty || PageDirty(page))
 			mss->private_dirty += size;
 		else
 			mss->private_clean += size;
 		mss->pss += (u64)size << PSS_SHIFT;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		if (PageAnon(page)) {
+			mss->private_anonymous += size;
+			mss->pss_anonymous += (size << PSS_SHIFT);
+		} else if (page_is_file_cache(page)) {
+			mss->private_filecache += size;
+			mss->pss_filecache += (size << PSS_SHIFT);
+		}
+#endif
 	}
 }
 
@@ -544,6 +664,9 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 				mss->swap_pss += pss_delta;
 			} else {
 				mss->swap_pss += (u64)PAGE_SIZE << PSS_SHIFT;
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+				mss->swap_uss += (u64)PAGE_SIZE << PSS_SHIFT;
+#endif
 			}
 		} else if (is_migration_entry(swpent))
 			page = migration_entry_to_page(swpent);
@@ -694,6 +817,9 @@ static int smaps_hugetlb_range(pte_t *pte, unsigned long hmask,
 
 static int show_smap(struct seq_file *m, void *v, int is_pid)
 {
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	struct proc_maps_private *priv = m->private;
+#endif
 	struct vm_area_struct *vma = v;
 	struct mem_size_stats mss;
 	struct mm_walk smaps_walk = {
@@ -711,6 +837,9 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 
 	show_map_vma(m, vma, is_pid);
 
+	if (is_dbt_task_olimit(vma))
+		return 0;
+
 	if (vma_get_anon_name(vma)) {
 		seq_puts(m, "Name:           ");
 		seq_print_vma_name(m, vma);
@@ -726,12 +855,26 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		   "Private_Clean:  %8lu kB\n"
 		   "Private_Dirty:  %8lu kB\n"
 		   "Referenced:     %8lu kB\n"
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   "Filecache:        %8lu kB\n"
+		   "Pss_Filecache:    %8lu kB\n"
+		   "Shared_Filecache: %8lu kB\n"
+		   "Private_Filecache:%8lu kB\n"
+#endif
 		   "Anonymous:      %8lu kB\n"
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   "Pss_Anonymous:    %8lu kB\n"
+		   "Shared_Anonymous: %8lu kB\n"
+		   "Private_Anonymous:%8lu kB\n"
+#endif
 		   "AnonHugePages:  %8lu kB\n"
 		   "Shared_Hugetlb: %8lu kB\n"
 		   "Private_Hugetlb: %7lu kB\n"
 		   "Swap:           %8lu kB\n"
 		   "SwapPss:        %8lu kB\n"
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   "USwap:          %8lu kB\n"
+#endif
 		   "KernelPageSize: %8lu kB\n"
 		   "MMUPageSize:    %8lu kB\n"
 		   "Locked:         %8lu kB\n",
@@ -743,18 +886,52 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		   mss.private_clean >> 10,
 		   mss.private_dirty >> 10,
 		   mss.referenced >> 10,
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   mss.filecache >> 10,
+		   (unsigned long)(mss.pss_filecache >> (10 + PSS_SHIFT)),
+		   mss.shared_filecache >> 10,
+		   mss.private_filecache >> 10,
+#endif
 		   mss.anonymous >> 10,
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   (unsigned long)(mss.pss_anonymous >> (10 + PSS_SHIFT)),
+		   mss.shared_anonymous >> 10,
+		   mss.private_anonymous >> 10,
+#endif
 		   mss.anonymous_thp >> 10,
 		   mss.shared_hugetlb >> 10,
 		   mss.private_hugetlb >> 10,
 		   mss.swap >> 10,
 		   (unsigned long)(mss.swap_pss >> (10 + PSS_SHIFT)),
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+		   (unsigned long)(mss.swap_uss >> (10 + PSS_SHIFT)),
+#endif
 		   vma_kernel_pagesize(vma) >> 10,
 		   vma_mmu_pagesize(vma) >> 10,
 		   (vma->vm_flags & VM_LOCKED) ?
 			(unsigned long)(mss.pss >> (10 + PSS_SHIFT)) : 0);
 
 	show_smap_vma_flags(m, vma);
+
+#ifdef CONFIG_ENHANCE_SMAPS_INFO
+	if (m_next_vma(priv, vma) == NULL)
+		show_smap_vma_sum(m, priv, &mss);
+
+	if (m->count < m->size) {
+		priv->rss += mss.resident;
+		priv->pss += mss.pss;
+		priv->uss += mss.private_clean + mss.private_dirty;
+		priv->filecache_rss += mss.filecache;
+		priv->anonymous_rss += mss.anonymous;
+		priv->filecache_pss += mss.pss_filecache;
+		priv->anonymous_pss += mss.pss_anonymous;
+		priv->filecache_uss += mss.private_filecache;
+		priv->anonymous_uss += mss.private_anonymous;
+		priv->swap += mss.swap;
+		priv->swap_pss += mss.swap_pss;
+		priv->swap_uss += mss.swap_uss;
+	}
+#endif
 	m_cache_vma(m, vma);
 	return 0;
 }
@@ -1391,6 +1568,9 @@ static int pagemap_open(struct inode *inode, struct file *file)
 {
 	struct mm_struct *mm;
 
+	/* do not disclose physical addresses: attack vector */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
 	mm = proc_mem_open(inode, PTRACE_MODE_READ);
 	if (IS_ERR(mm))
 		return PTR_ERR(mm);
@@ -1414,6 +1594,317 @@ const struct file_operations proc_pagemap_operations = {
 	.release	= pagemap_release,
 };
 #endif /* CONFIG_PROC_PAGE_MONITOR */
+
+#ifdef CONFIG_PROCESS_RECLAIM
+static int reclaim_pte_range(pmd_t *pmd, unsigned long addr,
+				unsigned long end, struct mm_walk *walk)
+{
+	struct reclaim_param *rp = walk->private;
+	struct vm_area_struct *vma = rp->vma;
+	pte_t *pte, ptent;
+	spinlock_t *ptl;
+	struct page *page;
+	LIST_HEAD(page_list);
+	int isolated;
+	int reclaimed = 0;
+
+	split_huge_page_pmd(vma, addr, pmd);
+
+	if (pmd_trans_unstable(pmd) || (rp->is_task_anon && !rp->nr_to_reclaim))
+		return 0;
+
+cont:
+	isolated = 0;
+	pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
+	for (; addr != end; pte++, addr += PAGE_SIZE) {
+		ptent = *pte;
+		if (!pte_present(ptent))
+			continue;
+
+		page = vm_normal_page(vma, addr, ptent);
+		if (!page)
+			continue;
+
+		/* we don't reclaim page in active lru list */
+		if (rp->inactive_lru && (PageActive(page) ||
+		    PageUnevictable(page)))
+			continue;
+
+		if (rp->type == RECLAIM_ANON && !PageAnon(page))
+			continue;
+		if (rp->type == RECLAIM_FILE && PageAnon(page))
+			continue;
+
+		if (isolate_lru_page(page))
+			continue;
+
+		list_add(&page->lru, &page_list);
+		inc_zone_page_state(page, NR_ISOLATED_ANON +
+				page_is_file_cache(page));
+		isolated++;
+		rp->nr_scanned++;
+
+		if (rp->is_task_anon) {
+			if ((isolated >= SWAP_CLUSTER_MAX) || !rp->nr_to_reclaim)
+				break;
+		} else {
+			if (isolated >= SWAP_CLUSTER_MAX)
+				break;
+		}
+	}
+	pte_unmap_unlock(pte - 1, ptl);
+#ifdef CONFIG_SWAP_ZDATA
+	reclaimed = reclaim_pages_from_list(&page_list, vma,
+				walk->hiber, &walk->nr_writedblock);
+	walk->nr_reclaimed += reclaimed;
+#else
+	reclaimed = reclaim_pages_from_list(&page_list, vma);
+#endif
+	rp->nr_reclaimed += reclaimed;
+	rp->nr_to_reclaim -= reclaimed;
+	if (rp->nr_to_reclaim < 0)
+		rp->nr_to_reclaim = 0;
+
+	if (rp->is_task_anon) {
+		if (rp->nr_to_reclaim && (addr != end))
+			goto cont;
+	} else {
+		if (addr != end)
+			goto cont;
+	}
+
+	cond_resched();
+	return 0;
+}
+
+struct reclaim_param reclaim_task_anon(struct task_struct *task,
+		int nr_to_reclaim)
+{
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	struct mm_walk reclaim_walk = {};
+	struct reclaim_param rp;
+
+	rp.nr_reclaimed = 0;
+	rp.nr_scanned = 0;
+	rp.type = RECLAIM_ANON;
+
+	get_task_struct(task);
+	mm = get_task_mm(task);
+	if (!mm)
+		goto out;
+
+	reclaim_walk.mm = mm;
+	reclaim_walk.pmd_entry = reclaim_pte_range;
+
+	rp.nr_to_reclaim = nr_to_reclaim;
+	rp.is_task_anon = true;
+	reclaim_walk.private = &rp;
+
+	down_read(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		if (is_vm_hugetlb_page(vma))
+			continue;
+
+		if (vma->vm_file)
+			continue;
+
+		if (!rp.nr_to_reclaim)
+			break;
+
+		rp.vma = vma;
+		walk_page_range(vma->vm_start, vma->vm_end,
+			&reclaim_walk);
+	}
+
+	flush_tlb_mm(mm);
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+out:
+	put_task_struct(task);
+	return rp;
+}
+
+static ssize_t reclaim_write(struct file *file, const char __user *buf,
+				size_t count, loff_t *ppos)
+{
+	struct task_struct *task;
+	char buffer[200];
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	enum reclaim_type type;
+	char *type_buf;
+	struct mm_walk reclaim_walk = {};
+	unsigned long start = 0;
+	unsigned long end = 0;
+	struct reclaim_param rp;
+
+#ifdef CONFIG_SWAP_ZDATA
+	struct timeval start_time;
+	struct timeval stop_time;
+	s64 elapsed_centisecs64;
+
+	reclaim_walk.nr_reclaimed = 0;
+	reclaim_walk.nr_writedblock = 0;
+#endif
+	rp.is_task_anon = false;
+	rp.inactive_lru = false;
+	rp.type = RECLAIM_ANON;
+
+	memset(buffer, 0, sizeof(buffer));
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+	type_buf = strstrip(buffer);
+#ifdef CONFIG_SWAP_ZDATA
+	reclaim_walk.hiber = false;
+#endif
+	if (!strcmp(type_buf, "soft"))
+		type = RECLAIM_SOFT;
+	else if (!strcmp(type_buf, "inactive"))
+		type = RECLAIM_INACTIVE;
+	else if (!strcmp(type_buf, "file"))
+		type = RECLAIM_FILE;
+	else if (!strcmp(type_buf, "anon"))
+		type = RECLAIM_ANON;
+	else if (!strcmp(type_buf, "all"))
+		type = RECLAIM_ALL;
+#ifdef CONFIG_SWAP_ZDATA
+	else if (!strcmp(type_buf, "hiber")) {
+		type = RECLAIM_ALL;
+		reclaim_walk.hiber = true;
+	} else if (!strcmp(type_buf, "hiber_anon")) {
+		type = RECLAIM_ANON;
+		reclaim_walk.hiber = true;
+	} else if (!strcmp(type_buf, "hiber_file")) {
+		type = RECLAIM_FILE;
+		reclaim_walk.hiber = true;
+	}
+#endif
+	else if (isdigit(*type_buf))
+		type = RECLAIM_RANGE;
+	else
+		goto out_err;
+
+	rp.type = type;
+
+	if (type == RECLAIM_RANGE) {
+		char *token;
+		unsigned long long len, len_in, tmp;
+		token = strsep(&type_buf, " ");
+		if (!token)
+			goto out_err;
+		tmp = memparse(token, &token);
+		if (tmp & ~PAGE_MASK || tmp > ULONG_MAX)
+			goto out_err;
+		start = tmp;
+
+		token = strsep(&type_buf, " ");
+		if (!token)
+			goto out_err;
+		len_in = memparse(token, &token);
+		len = (len_in + ~PAGE_MASK) & PAGE_MASK;
+		if (len > ULONG_MAX)
+			goto out_err;
+		/*
+		 * Check to see whether len was rounded up from small -ve
+		 * to zero.
+		 */
+		if (len_in && !len)
+			goto out_err;
+
+		end = start + len;
+		if (end < start)
+			goto out_err;
+	}
+
+	task = get_proc_task(file->f_path.dentry->d_inode);
+	if (!task)
+		return -ESRCH;
+
+	mm = get_task_mm(task);
+	if (!mm)
+		goto out;
+
+	/* here we add a soft shrinker for reclaim */
+	if (type == RECLAIM_SOFT) {
+		smart_soft_shrink(mm);
+		mmput(mm);
+		goto out;
+	}
+
+	if (type == RECLAIM_INACTIVE)
+		rp.inactive_lru = true;
+
+	reclaim_walk.mm = mm;
+	reclaim_walk.pmd_entry = reclaim_pte_range;
+#ifdef CONFIG_SWAP_ZDATA
+	if (reclaim_walk.hiber)
+		do_gettimeofday(&start_time);
+#endif
+	rp.nr_to_reclaim = ~0;
+	rp.nr_reclaimed = 0;
+	reclaim_walk.private = &rp;
+
+	down_read(&mm->mmap_sem);
+	if (type == RECLAIM_RANGE) {
+		vma = find_vma(mm, start);
+		while (vma) {
+			if (vma->vm_start > end)
+				break;
+			if (is_vm_hugetlb_page(vma))
+				continue;
+
+			rp.vma = vma;
+			walk_page_range(max(vma->vm_start, start),
+					min(vma->vm_end, end),
+					&reclaim_walk);
+			vma = vma->vm_next;
+		}
+	} else {
+		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+			if (is_vm_hugetlb_page(vma))
+				continue;
+#ifdef CONFIG_SWAP_ZDATA
+			if (reclaim_walk.hiber &&
+					reclaim_sigusr_pending(current))
+				break;
+#endif
+			rp.vma = vma;
+			walk_page_range(vma->vm_start, vma->vm_end,
+				&reclaim_walk);
+		}
+	}
+
+	flush_tlb_mm(mm);
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+#ifdef CONFIG_SWAP_ZDATA
+	if (reclaim_walk.hiber) {
+		do_gettimeofday(&stop_time);
+		elapsed_centisecs64 = timeval_to_ns(&stop_time) -
+					timeval_to_ns(&start_time);
+
+		process_reclaim_result_write(task, reclaim_walk.nr_reclaimed,
+			reclaim_walk.nr_writedblock, elapsed_centisecs64);
+	}
+#endif
+out:
+	put_task_struct(task);
+	return count;
+
+out_err:
+	return -EINVAL;
+}
+
+const struct file_operations proc_reclaim_operations = {
+	.write		= reclaim_write,
+	.llseek		= noop_llseek,
+};
+#endif
 
 #ifdef CONFIG_NUMA
 

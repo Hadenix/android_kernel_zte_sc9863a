@@ -126,7 +126,7 @@ static int do_readpage(struct page *page)
 		goto out;
 	}
 
-	dn = kmalloc(UBIFS_MAX_DATA_NODE_SZ, GFP_NOFS);
+	dn = __vmalloc(UBIFS_MAX_DATA_NODE_SZ, GFP_NOFS, PAGE_KERNEL);
 	if (!dn) {
 		err = -ENOMEM;
 		goto error;
@@ -173,7 +173,7 @@ static int do_readpage(struct page *page)
 	}
 
 out_free:
-	kfree(dn);
+	vfree(dn);
 out:
 	SetPageUptodate(page);
 	ClearPageError(page);
@@ -182,7 +182,7 @@ out:
 	return 0;
 
 error:
-	kfree(dn);
+	vfree(dn);
 	ClearPageUptodate(page);
 	SetPageError(page);
 	flush_dcache_page(page);
@@ -754,7 +754,9 @@ static int ubifs_do_bulk_read(struct ubifs_info *c, struct bu_info *bu,
 				      bu->zbranch[0].offs;
 			ubifs_assert(bu->buf_len > 0);
 			ubifs_assert(bu->buf_len <= c->leb_size);
-			bu->buf = kmalloc(bu->buf_len, GFP_NOFS | __GFP_NOWARN);
+			bu->buf = __vmalloc(bu->buf_len,
+					    GFP_NOFS | __GFP_NOWARN,
+					    PAGE_KERNEL);
 			if (!bu->buf)
 				goto out_bu_off;
 		}
@@ -798,7 +800,7 @@ static int ubifs_do_bulk_read(struct ubifs_info *c, struct bu_info *bu,
 
 out_free:
 	if (allocate)
-		kfree(bu->buf);
+		vfree(bu->buf);
 	return ret;
 
 out_warn:
@@ -862,7 +864,8 @@ static int ubifs_bulk_read(struct page *page)
 	if (mutex_trylock(&c->bu_mutex))
 		bu = &c->bu;
 	else {
-		bu = kmalloc(sizeof(struct bu_info), GFP_NOFS | __GFP_NOWARN);
+		bu = __vmalloc(sizeof(struct bu_info),
+			       GFP_NOFS | __GFP_NOWARN, PAGE_KERNEL);
 		if (!bu)
 			goto out_unlock;
 
@@ -878,7 +881,7 @@ static int ubifs_bulk_read(struct page *page)
 	if (!allocated)
 		mutex_unlock(&c->bu_mutex);
 	else
-		kfree(bu);
+		vfree(bu);
 
 out_unlock:
 	mutex_unlock(&ui->ui_mutex);

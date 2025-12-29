@@ -50,7 +50,30 @@ static DEFINE_SPINLOCK(cancel_lock);
 static inline bool isalarm(struct timerfd_ctx *ctx)
 {
 	return ctx->clockid == CLOCK_REALTIME_ALARM ||
-		ctx->clockid == CLOCK_BOOTTIME_ALARM;
+		ctx->clockid == CLOCK_BOOTTIME_ALARM ||
+		ctx->clockid == CLOCK_POWEROFF_WAKE ||
+		ctx->clockid == CLOCK_POWERON_WAKE ||
+		ctx->clockid == CLOCK_POWEROFF_ALARM;
+}
+
+/**
+ * clock2alarm - helper that converts from clockid to alarmtypes
+ * @clockid: clockid.
+ */
+static enum alarmtimer_type clock2alarm(clockid_t clockid)
+{
+	if (clockid == CLOCK_REALTIME_ALARM)
+		return ALARM_REALTIME;
+	else if (clockid == CLOCK_BOOTTIME_ALARM)
+		return ALARM_BOOTTIME;
+	else if (clockid == CLOCK_POWEROFF_WAKE)
+		return ALARM_POWEROFF;
+	else if (clockid == CLOCK_POWERON_WAKE)
+		return ALARM_POWERON;
+	else if (clockid == CLOCK_POWEROFF_ALARM)
+		return ALARM_POWEROFF_ALARM;
+	else
+		return -1;
 }
 
 /*
@@ -142,7 +165,10 @@ static void timerfd_setup_cancel(struct timerfd_ctx *ctx, int flags)
 {
 	spin_lock(&ctx->cancel_lock);
 	if ((ctx->clockid == CLOCK_REALTIME ||
-	     ctx->clockid == CLOCK_REALTIME_ALARM) &&
+	     ctx->clockid == CLOCK_REALTIME_ALARM ||
+	     ctx->clockid == CLOCK_POWEROFF_WAKE ||
+	     ctx->clockid == CLOCK_POWERON_WAKE ||
+	     ctx->clockid == CLOCK_POWEROFF_ALARM) &&
 	    (flags & TFD_TIMER_ABSTIME) && (flags & TFD_TIMER_CANCEL_ON_SET)) {
 		if (!ctx->might_cancel) {
 			ctx->might_cancel = true;
@@ -185,8 +211,7 @@ static int timerfd_setup(struct timerfd_ctx *ctx, int flags,
 
 	if (isalarm(ctx)) {
 		alarm_init(&ctx->t.alarm,
-			   ctx->clockid == CLOCK_REALTIME_ALARM ?
-			   ALARM_REALTIME : ALARM_BOOTTIME,
+			   clock2alarm(ctx->clockid),
 			   timerfd_alarmproc);
 	} else {
 		hrtimer_init(&ctx->t.tmr, clockid, htmode);
@@ -215,11 +240,16 @@ static int timerfd_setup(struct timerfd_ctx *ctx, int flags,
 static int timerfd_release(struct inode *inode, struct file *file)
 {
 	struct timerfd_ctx *ctx = file->private_data;
+	int clockid = ctx->clockid;
 
 	timerfd_remove_cancel(ctx);
 
-	if (isalarm(ctx))
-		alarm_cancel(&ctx->t.alarm);
+	if (isalarm(ctx)) {
+		if (!((system_state == SYSTEM_POWER_OFF) &&
+		    (clockid == CLOCK_POWEROFF_ALARM ||
+		     clockid == CLOCK_POWERON_WAKE)))
+			alarm_cancel(&ctx->t.alarm);
+	}
 	else
 		hrtimer_cancel(&ctx->t.tmr);
 	kfree_rcu(ctx, rcu);
@@ -385,8 +415,9 @@ static int timerfd_fget(int fd, struct fd *p)
 
 SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 {
-	int ufd;
+	int ufd, ret;
 	struct timerfd_ctx *ctx;
+	struct fd f;
 
 	/* Check the TFD_* constants for consistency.  */
 	BUILD_BUG_ON(TFD_CLOEXEC != O_CLOEXEC);
@@ -397,7 +428,10 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 	     clockid != CLOCK_REALTIME &&
 	     clockid != CLOCK_REALTIME_ALARM &&
 	     clockid != CLOCK_BOOTTIME &&
-	     clockid != CLOCK_BOOTTIME_ALARM))
+	     clockid != CLOCK_BOOTTIME_ALARM &&
+	     clockid != CLOCK_POWEROFF_WAKE &&
+	     clockid != CLOCK_POWERON_WAKE &&
+	     clockid != CLOCK_POWEROFF_ALARM))
 		return -EINVAL;
 
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
@@ -410,8 +444,7 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 
 	if (isalarm(ctx))
 		alarm_init(&ctx->t.alarm,
-			   ctx->clockid == CLOCK_REALTIME_ALARM ?
-			   ALARM_REALTIME : ALARM_BOOTTIME,
+			   clock2alarm(ctx->clockid),
 			   timerfd_alarmproc);
 	else
 		hrtimer_init(&ctx->t.tmr, clockid, HRTIMER_MODE_ABS);
@@ -420,8 +453,24 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 
 	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
 			       O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
-	if (ufd < 0)
+	if (ufd < 0) {
 		kfree(ctx);
+		return ufd;
+	}
+	/*
+	 * We need to get the usage counter for power-off alarm in case
+	 * system will put the timerfd file descriptor to cancel power-
+	 * off alarm.
+	 */
+	if (clockid == CLOCK_POWEROFF_WAKE ||
+	    clockid == CLOCK_POWERON_WAKE ||
+	    clockid == CLOCK_POWEROFF_ALARM) {
+		ret = timerfd_fget(ufd, &f);
+		if (ret) {
+			kfree(ctx);
+			return ret;
+		}
+	}
 
 	return ufd;
 }

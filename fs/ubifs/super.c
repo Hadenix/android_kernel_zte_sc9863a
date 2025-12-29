@@ -116,7 +116,7 @@ struct inode *ubifs_iget(struct super_block *sb, unsigned long inum)
 		return inode;
 	ui = ubifs_inode(inode);
 
-	ino = kmalloc(UBIFS_MAX_INO_NODE_SZ, GFP_NOFS);
+	ino = __vmalloc(UBIFS_MAX_INO_NODE_SZ, GFP_NOFS, PAGE_KERNEL);
 	if (!ino) {
 		err = -ENOMEM;
 		goto out;
@@ -240,7 +240,7 @@ struct inode *ubifs_iget(struct super_block *sb, unsigned long inum)
 		goto out_invalid;
 	}
 
-	kfree(ino);
+	vfree(ino);
 	ubifs_set_inode_flags(inode);
 	unlock_new_inode(inode);
 	return inode;
@@ -251,7 +251,7 @@ out_invalid:
 	ubifs_dump_inode(c, inode);
 	err = -EINVAL;
 out_ino:
-	kfree(ino);
+	vfree(ino);
 out:
 	ubifs_err(c, "failed to read inode %lu, error %d", inode->i_ino, err);
 	iget_failed(inode);
@@ -1102,7 +1102,8 @@ static void bu_init(struct ubifs_info *c)
 		return; /* Already initialized */
 
 again:
-	c->bu.buf = kmalloc(c->max_bu_buf_len, GFP_KERNEL | __GFP_NOWARN);
+	c->bu.buf = __vmalloc(c->max_bu_buf_len, GFP_KERNEL | __GFP_NOWARN,
+			      PAGE_KERNEL);
 	if (!c->bu.buf) {
 		if (c->max_bu_buf_len > UBIFS_KMALLOC_OK) {
 			c->max_bu_buf_len = UBIFS_KMALLOC_OK;
@@ -1207,8 +1208,7 @@ static int mount_ubifs(struct ubifs_info *c)
 		bu_init(c);
 
 	if (!c->ro_mount) {
-		c->write_reserve_buf = kmalloc(COMPRESSED_DATA_NODE_BUF_SZ,
-					       GFP_KERNEL);
+		c->write_reserve_buf = vmalloc(COMPRESSED_DATA_NODE_BUF_SZ);
 		if (!c->write_reserve_buf)
 			goto out_free;
 	}
@@ -1238,7 +1238,7 @@ static int mount_ubifs(struct ubifs_info *c)
 
 	sz = ALIGN(c->max_idx_node_sz, c->min_io_size);
 	sz = ALIGN(sz + c->max_idx_node_sz, c->min_io_size);
-	c->cbuf = kmalloc(sz, GFP_NOFS);
+	c->cbuf = __vmalloc(sz, GFP_NOFS, PAGE_KERNEL);
 	if (!c->cbuf) {
 		err = -ENOMEM;
 		goto out_free;
@@ -1486,10 +1486,10 @@ out_master:
 out_wbufs:
 	free_wbufs(c);
 out_cbuf:
-	kfree(c->cbuf);
+	vfree(c->cbuf);
 out_free:
-	kfree(c->write_reserve_buf);
-	kfree(c->bu.buf);
+	vfree(c->write_reserve_buf);
+	vfree(c->bu.buf);
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
 	kfree(c->bottom_up_buf);
@@ -1524,11 +1524,11 @@ static void ubifs_umount(struct ubifs_info *c)
 	free_orphans(c);
 	ubifs_lpt_free(c, 0);
 
-	kfree(c->cbuf);
+	vfree(c->cbuf);
 	kfree(c->rcvrd_mst_node);
 	kfree(c->mst_node);
-	kfree(c->write_reserve_buf);
-	kfree(c->bu.buf);
+	vfree(c->write_reserve_buf);
+	vfree(c->bu.buf);
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
 	kfree(c->bottom_up_buf);
@@ -1620,7 +1620,7 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 		goto out;
 	}
 
-	c->write_reserve_buf = kmalloc(COMPRESSED_DATA_NODE_BUF_SZ, GFP_KERNEL);
+	c->write_reserve_buf = vmalloc(COMPRESSED_DATA_NODE_BUF_SZ);
 	if (!c->write_reserve_buf) {
 		err = -ENOMEM;
 		goto out;
@@ -1696,7 +1696,7 @@ out:
 		c->bgt = NULL;
 	}
 	free_wbufs(c);
-	kfree(c->write_reserve_buf);
+	vfree(c->write_reserve_buf);
 	c->write_reserve_buf = NULL;
 	vfree(c->ileb_buf);
 	c->ileb_buf = NULL;
@@ -1743,7 +1743,7 @@ static void ubifs_remount_ro(struct ubifs_info *c)
 
 	vfree(c->orph_buf);
 	c->orph_buf = NULL;
-	kfree(c->write_reserve_buf);
+	vfree(c->write_reserve_buf);
 	c->write_reserve_buf = NULL;
 	vfree(c->ileb_buf);
 	c->ileb_buf = NULL;
@@ -1872,7 +1872,7 @@ static int ubifs_remount_fs(struct super_block *sb, int *flags, char *data)
 		bu_init(c);
 	else {
 		dbg_gen("disable bulk-read");
-		kfree(c->bu.buf);
+		vfree(c->bu.buf);
 		c->bu.buf = NULL;
 	}
 

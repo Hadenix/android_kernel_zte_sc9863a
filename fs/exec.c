@@ -1524,6 +1524,9 @@ static int exec_binprm(struct linux_binprm *bprm)
 /*
  * sys_execve() executes a new program.
  */
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+extern struct cpumask compat_32bit_cpu_mask;
+#endif
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
@@ -1534,6 +1537,9 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	struct cpumask dstp;
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1635,6 +1641,18 @@ static int do_execveat_common(int fd, struct filename *filename,
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;
+
+#ifdef CONFIG_SCHED_COMPAT_LIMIT
+	if (is_compat_task()) {
+		cpumask_and(&dstp, &current->cpus_allowed,
+			    &compat_32bit_cpu_mask);
+		if (cpumask_empty(&dstp))
+			cpumask_copy(&dstp, &compat_32bit_cpu_mask);
+		sched_setaffinity(current->pid, &dstp);
+		if (!cpumask_test_cpu(task_cpu(current), &dstp))
+			sched_exec();
+	}
+#endif
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;

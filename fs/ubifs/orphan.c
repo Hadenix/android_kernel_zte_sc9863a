@@ -923,7 +923,7 @@ static int dbg_check_orphans(struct ubifs_info *c)
 	ci.missing  = 0;
 	ci.leaf_cnt = 0;
 	ci.root = RB_ROOT;
-	ci.node = kmalloc(UBIFS_MAX_INO_NODE_SZ, GFP_NOFS);
+	ci.node = __vmalloc(UBIFS_MAX_INO_NODE_SZ, GFP_NOFS, PAGE_KERNEL);
 	if (!ci.node) {
 		ubifs_err(c, "out of memory");
 		return -ENOMEM;
@@ -951,6 +951,6 @@ static int dbg_check_orphans(struct ubifs_info *c)
 
 out:
 	dbg_free_check_tree(&ci.root);
-	kfree(ci.node);
+	vfree(ci.node);
 	return err;
 }

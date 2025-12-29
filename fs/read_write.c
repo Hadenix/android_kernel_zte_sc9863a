@@ -16,6 +16,9 @@
 #include <linux/pagemap.h>
 #include <linux/splice.h>
 #include <linux/compat.h>
+#ifdef CONFIG_IODEBUG_VFS
+#include <linux/iodebug.h>
+#endif
 #include "internal.h"
 
 #include <asm/uaccess.h>
@@ -440,6 +443,9 @@ EXPORT_SYMBOL(__vfs_read);
 ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t ret;
+#ifdef CONFIG_IODEBUG_VFS
+	unsigned long jiffies_begin = jiffies;
+#endif
 
 	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;
@@ -459,6 +465,10 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 		inc_syscr(current);
 	}
 
+#ifdef CONFIG_IODEBUG_VFS
+	iodebug_save_vfs_io(VFS_READ, count, file,
+				NOT_FUSE, (jiffies - jiffies_begin));
+#endif
 	return ret;
 }
 
@@ -523,6 +533,9 @@ EXPORT_SYMBOL(__kernel_write);
 ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t ret;
+#ifdef CONFIG_IODEBUG_VFS
+	unsigned long jiffies_begin = jiffies;
+#endif
 
 	if (!(file->f_mode & FMODE_WRITE))
 		return -EBADF;
@@ -544,6 +557,10 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 		file_end_write(file);
 	}
 
+#ifdef CONFIG_IODEBUG_VFS
+	iodebug_save_vfs_io(VFS_WRITE, count, file,
+				NOT_FUSE, (jiffies - jiffies_begin));
+#endif
 	return ret;
 }
 

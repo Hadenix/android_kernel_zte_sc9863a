@@ -576,7 +576,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	/* Make sure to also account for extended attributes */
 	len += host_ui->data_len;
 
-	dent = kmalloc(len, GFP_NOFS);
+	dent = __vmalloc(len, GFP_NOFS, PAGE_KERNEL);
 	if (!dent)
 		return -ENOMEM;
 
@@ -626,7 +626,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 		ubifs_wbuf_add_ino_nolock(wbuf, dir->i_ino);
 	}
 	release_head(c, BASEHD);
-	kfree(dent);
+	vfree(dent);
 
 	if (deletion) {
 		err = ubifs_tnc_remove_nm(c, &dent_key, nm);
@@ -668,12 +668,12 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 out_finish:
 	finish_reservation(c);
 out_free:
-	kfree(dent);
+	vfree(dent);
 	return err;
 
 out_release:
 	release_head(c, BASEHD);
-	kfree(dent);
+	vfree(dent);
 out_ro:
 	ubifs_ro_mode(c, err);
 	if (last_reference)
@@ -705,7 +705,7 @@ int ubifs_jnl_write_data(struct ubifs_info *c, const struct inode *inode,
 		(unsigned long)key_inum(c, key), key_block(c, key), len);
 	ubifs_assert(len <= UBIFS_BLOCK_SIZE);
 
-	data = kmalloc(dlen, GFP_NOFS | __GFP_NOWARN);
+	data = __vmalloc(dlen, GFP_NOFS | __GFP_NOWARN, PAGE_KERNEL);
 	if (!data) {
 		/*
 		 * Fall-back to the write reserve buffer. Note, we might be
@@ -756,7 +756,7 @@ int ubifs_jnl_write_data(struct ubifs_info *c, const struct inode *inode,
 	if (!allocated)
 		mutex_unlock(&c->write_reserve_mutex);
 	else
-		kfree(data);
+		vfree(data);
 	return 0;
 
 out_release:
@@ -768,7 +768,7 @@ out_free:
 	if (!allocated)
 		mutex_unlock(&c->write_reserve_mutex);
 	else
-		kfree(data);
+		vfree(data);
 	return err;
 }
 
@@ -798,7 +798,7 @@ int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 		len += ui->data_len;
 		sync = IS_SYNC(inode);
 	}
-	ino = kmalloc(len, GFP_NOFS);
+	ino = __vmalloc(len, GFP_NOFS, PAGE_KERNEL);
 	if (!ino)
 		return -ENOMEM;
 
@@ -835,7 +835,7 @@ int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 	spin_lock(&ui->ui_lock);
 	ui->synced_i_size = ui->ui_size;
 	spin_unlock(&ui->ui_lock);
-	kfree(ino);
+	vfree(ino);
 	return 0;
 
 out_release:
@@ -844,7 +844,7 @@ out_ro:
 	ubifs_ro_mode(c, err);
 	finish_reservation(c);
 out_free:
-	kfree(ino);
+	vfree(ino);
 	return err;
 }
 
@@ -960,7 +960,7 @@ int ubifs_jnl_rename(struct ubifs_info *c, const struct inode *old_dir,
 	len = aligned_dlen1 + aligned_dlen2 + ALIGN(ilen, 8) + ALIGN(plen, 8);
 	if (old_dir != new_dir)
 		len += plen;
-	dent = kmalloc(len, GFP_NOFS);
+	dent = __vmalloc(len, GFP_NOFS, PAGE_KERNEL);
 	if (!dent)
 		return -ENOMEM;
 
@@ -1076,7 +1076,7 @@ int ubifs_jnl_rename(struct ubifs_info *c, const struct inode *old_dir,
 	mark_inode_clean(c, ubifs_inode(old_dir));
 	if (move)
 		mark_inode_clean(c, ubifs_inode(new_dir));
-	kfree(dent);
+	vfree(dent);
 	return 0;
 
 out_release:
@@ -1088,7 +1088,7 @@ out_ro:
 out_finish:
 	finish_reservation(c);
 out_free:
-	kfree(dent);
+	vfree(dent);
 	return err;
 }
 
@@ -1107,7 +1107,7 @@ static int recomp_data_node(const struct ubifs_info *c,
 	int err, len, compr_type, out_len;
 
 	out_len = le32_to_cpu(dn->size);
-	buf = kmalloc_array(out_len, WORST_COMPR_FACTOR, GFP_NOFS);
+	buf = __vmalloc((size_t)out_len * WORST_COMPR_FACTOR, GFP_NOFS, PAGE_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1123,7 +1123,7 @@ static int recomp_data_node(const struct ubifs_info *c,
 	dn->size = cpu_to_le32(*new_len);
 	*new_len = UBIFS_DATA_NODE_SZ + out_len;
 out:
-	kfree(buf);
+	vfree(buf);
 	return err;
 }
 
@@ -1162,7 +1162,7 @@ int ubifs_jnl_truncate(struct ubifs_info *c, const struct inode *inode,
 
 	sz = UBIFS_TRUN_NODE_SZ + UBIFS_INO_NODE_SZ +
 	     UBIFS_MAX_DATA_NODE_SZ * WORST_COMPR_FACTOR;
-	ino = kmalloc(sz, GFP_NOFS);
+	ino = __vmalloc(sz, GFP_NOFS, PAGE_KERNEL);
 	if (!ino)
 		return -ENOMEM;
 
@@ -1257,7 +1257,7 @@ int ubifs_jnl_truncate(struct ubifs_info *c, const struct inode *inode,
 	ui->synced_i_size = ui->ui_size;
 	spin_unlock(&ui->ui_lock);
 	mark_inode_clean(c, ui);
-	kfree(ino);
+	vfree(ino);
 	return 0;
 
 out_release:
@@ -1266,7 +1266,7 @@ out_ro:
 	ubifs_ro_mode(c, err);
 	finish_reservation(c);
 out_free:
-	kfree(ino);
+	vfree(ino);
 	return err;
 }
 
@@ -1308,14 +1308,14 @@ int ubifs_jnl_delete_xattr(struct ubifs_info *c, const struct inode *host,
 	hlen = host_ui->data_len + UBIFS_INO_NODE_SZ;
 	len = aligned_xlen + UBIFS_INO_NODE_SZ + ALIGN(hlen, 8);
 
-	xent = kmalloc(len, GFP_NOFS);
+	xent = __vmalloc(len, GFP_NOFS, PAGE_KERNEL);
 	if (!xent)
 		return -ENOMEM;
 
 	/* Make reservation before allocating sequence numbers */
 	err = make_reservation(c, BASEHD, len);
 	if (err) {
-		kfree(xent);
+		vfree(xent);
 		return err;
 	}
 
@@ -1339,7 +1339,7 @@ int ubifs_jnl_delete_xattr(struct ubifs_info *c, const struct inode *host,
 	if (!sync && !err)
 		ubifs_wbuf_add_ino_nolock(&c->jheads[BASEHD].wbuf, host->i_ino);
 	release_head(c, BASEHD);
-	kfree(xent);
+	vfree(xent);
 	if (err)
 		goto out_ro;
 
@@ -1415,7 +1415,7 @@ int ubifs_jnl_change_xattr(struct ubifs_info *c, const struct inode *inode,
 	aligned_len1 = ALIGN(len1, 8);
 	aligned_len = aligned_len1 + ALIGN(len2, 8);
 
-	ino = kmalloc(aligned_len, GFP_NOFS);
+	ino = __vmalloc(aligned_len, GFP_NOFS, PAGE_KERNEL);
 	if (!ino)
 		return -ENOMEM;
 
@@ -1453,14 +1453,14 @@ int ubifs_jnl_change_xattr(struct ubifs_info *c, const struct inode *inode,
 	host_ui->synced_i_size = host_ui->ui_size;
 	spin_unlock(&host_ui->ui_lock);
 	mark_inode_clean(c, host_ui);
-	kfree(ino);
+	vfree(ino);
 	return 0;
 
 out_ro:
 	ubifs_ro_mode(c, err);
 	finish_reservation(c);
 out_free:
-	kfree(ino);
+	vfree(ino);
 	return err;
 }
 
