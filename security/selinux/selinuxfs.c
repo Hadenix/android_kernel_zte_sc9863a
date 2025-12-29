@@ -41,6 +41,11 @@
 #include "objsec.h"
 #include "conditional.h"
 
+/* Preproc/postproc policy as binary image */
+#if defined(CONFIG_SECURITY_SELINUX_POLICYPROC)
+#include "ss/policyproc.h"
+#endif /* CONFIG_SECURITY_SELINUX_POLICYPROC */
+
 /* Policy capability filenames */
 static char *policycap_names[] = {
 	"network_peer_controls",
@@ -50,6 +55,8 @@ static char *policycap_names[] = {
 };
 
 unsigned int selinux_checkreqprot = CONFIG_SECURITY_SELINUX_CHECKREQPROT_VALUE;
+unsigned int avc_backtrace;
+unsigned int avc_backtrace_pid;
 
 static int __init checkreqprot_setup(char *str)
 {
@@ -116,6 +123,8 @@ enum sel_inos {
 	SEL_DENY_UNKNOWN, /* export unknown deny handling to userspace */
 	SEL_STATUS,	/* export current status using mmap() */
 	SEL_POLICY,	/* allow userspace to read the in kernel policy */
+	SEL_BACKTRACE,/* avc backtrace dump stack switch */
+	SEL_BACKTRACE_PID,/* avc backtrace dump stack filter by pid */
 	SEL_INO_NEXT,	/* The next inode number to use */
 };
 
@@ -402,6 +411,14 @@ static int sel_open_policy(struct inode *inode, struct file *filp)
 	if (rc)
 		goto err;
 
+/* Preproc/postproc policy as binary image */
+#if defined(CONFIG_SECURITY_SELINUX_POLICYPROC)
+	rc = pp_postproc_policy(&plm->data, &plm->len);
+	if (rc) {
+		goto err;
+	}
+#endif /* CONFIG_SECURITY_SELINUX_POLICYPROC */
+
 	policy_opened = 1;
 
 	filp->private_data = plm;
@@ -501,6 +518,116 @@ static const struct file_operations sel_policy_ops = {
 	.llseek		= generic_file_llseek,
 };
 
+static ssize_t sel_read_backtrace(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+
+{
+	char tmpbuf[TMPBUFLEN];
+	ssize_t length;
+
+	length = scnprintf(tmpbuf, TMPBUFLEN, "%d", avc_backtrace);
+	return simple_read_from_buffer(buf, count, ppos, tmpbuf, length);
+}
+
+static ssize_t sel_write_backtrace(struct file *file, const char __user *buf,
+					size_t count, loff_t *ppos)
+
+{
+	char *page = NULL;
+	ssize_t length;
+	int new_value;
+
+	length = -ENOMEM;
+	if (count >= PAGE_SIZE)
+	goto out1;
+
+    /* No partial writes. */
+	length = -EINVAL;
+	if (*ppos != 0)
+		goto out1;
+
+	length = -ENOMEM;
+	page = (char *)get_zeroed_page(GFP_KERNEL);
+	if (!page)
+		goto out;
+
+	length = -EFAULT;
+	if (copy_from_user(page, buf, count))
+		goto out;
+
+	length = -EINVAL;
+	if (sscanf(page, "%d", &new_value) != 1)
+		goto out;
+
+	if (new_value != avc_backtrace)
+		avc_backtrace = new_value;
+	length = count;
+out:
+	free_page((unsigned long) page);
+out1:
+	return length;
+}
+
+static const struct file_operations sel_backtrace_ops = {
+	.read       = sel_read_backtrace,
+	.write      = sel_write_backtrace,
+};
+
+static ssize_t sel_read_backtrace_pid(struct file *filp, char __user *buf,
+					size_t count, loff_t *ppos)
+
+{
+	char tmpbuf[TMPBUFLEN];
+	ssize_t length;
+
+	length = scnprintf(tmpbuf, TMPBUFLEN, "%d", avc_backtrace_pid);
+	return simple_read_from_buffer(buf, count, ppos, tmpbuf, length);
+}
+
+static ssize_t sel_write_backtrace_pid(struct file *file,
+			const char __user *buf, size_t count, loff_t *ppos)
+
+{
+	char *page = NULL;
+	ssize_t length;
+	int new_value;
+
+	length = -ENOMEM;
+	if (count >= PAGE_SIZE)
+		goto out1;
+
+    /* No partial writes. */
+	length = -EINVAL;
+	if (*ppos != 0)
+		goto out1;
+
+	length = -ENOMEM;
+	page = (char *)get_zeroed_page(GFP_KERNEL);
+	if (!page)
+		goto out;
+
+	length = -EFAULT;
+	if (copy_from_user(page, buf, count))
+		goto out;
+
+	length = -EINVAL;
+	if (sscanf(page, "%d", &new_value) != 1)
+		goto out;
+
+	if (new_value != avc_backtrace)
+		avc_backtrace_pid = new_value;
+	length = count;
+out:
+	free_page((unsigned long) page);
+out1:
+	return length;
+}
+
+static const struct file_operations sel_backtrace_pid_ops = {
+	.read       = sel_read_backtrace_pid,
+	.write      = sel_write_backtrace_pid,
+};
+
 static ssize_t sel_write_load(struct file *file, const char __user *buf,
 			      size_t count, loff_t *ppos)
 
@@ -531,6 +658,13 @@ static ssize_t sel_write_load(struct file *file, const char __user *buf,
 	length = -EFAULT;
 	if (copy_from_user(data, buf, count) != 0)
 		goto out;
+
+/* Preproc/postproc policy as binary image */
+#if defined(CONFIG_SECURITY_SELINUX_POLICYPROC)
+	if (pp_preproc_policy(&data, &count) != 0) {
+		goto out;
+	}
+#endif /* CONFIG_SECURITY_SELINUX_POLICYPROC */
 
 	length = security_load_policy(data, count);
 	if (length)
@@ -1759,6 +1893,10 @@ static int sel_fill_super(struct super_block *sb, void *data, int silent)
 		[SEL_DENY_UNKNOWN] = {"deny_unknown", &sel_handle_unknown_ops, S_IRUGO},
 		[SEL_STATUS] = {"status", &sel_handle_status_ops, S_IRUGO},
 		[SEL_POLICY] = {"policy", &sel_policy_ops, S_IRUGO},
+		[SEL_BACKTRACE] = {"backtrace", &sel_backtrace_ops,
+							S_IRUGO|S_IWUGO},
+		[SEL_BACKTRACE_PID] = {"backtrace_pid", &sel_backtrace_pid_ops,
+							S_IRUGO|S_IWUGO},
 		/* last one */ {""}
 	};
 	ret = simple_fill_super(sb, SELINUX_MAGIC, selinux_files);

@@ -35,6 +35,10 @@
 #include <linux/android_aid.h>
 #endif
 
+#ifdef CONFIG_ROOT_RECORDER
+#include <linux/root_recorder.h>
+#endif
+
 /*
  * If a non-root user executes a setuid-root binary in
  * !secure(SECURE_NOROOT) mode, then we raise capabilities.
@@ -89,10 +93,27 @@ int cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
 	 * user namespace's parents.
 	 */
 	for (;;) {
-		/* Do we have the necessary capabilities? */
-		if (ns == cred->user_ns)
-			return cap_raised(cred->cap_effective, cap) ? 0 : -EPERM;
+		/*root_recorder_change_start*/
+		if (cred == NULL)
+			return -EPERM;
 
+		/* Do we have the necessary capabilities? */
+		if (ns == cred->user_ns) {
+#ifdef CONFIG_ROOT_RECORDER
+			if(cap_raised(cred->cap_effective, cap)){
+				if(audit && cap != CAP_SETPCAP &&
+				   inspect_illegal_root_capability(cap)){
+					record_illegal_root("illegal root cap !setpcap", cap);
+				}
+				return 0;
+			}else{
+				return -EPERM;
+			}
+#else
+			return cap_raised(cred->cap_effective, cap) ? 0 : -EPERM;
+#endif
+		}
+		/*root_recorder_change_end*/
 		/* Have we tried all of the parent namespaces? */
 		if (ns == &init_user_ns)
 			return -EPERM;
@@ -774,6 +795,18 @@ static inline void cap_emulate_setxuid(struct cred *new, const struct cred *old)
  */
 int cap_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
 {
+#ifdef CONFIG_ROOT_RECORDER
+	/*root_recorder_change_start*/
+	if ((old->euid.val != 0 && new->euid.val == 0) ||
+		(old->uid.val != 0 && new->uid.val == 0)   ||
+	    (old->suid.val != 0 && new->suid.val == 0) ||
+		(old->fsuid.val != 0 && new->fsuid.val == 0)){
+		if(inspect_illegal_root_capability(-1)){
+			record_illegal_root("illegal root uid", -1);
+		}
+	}
+	/*root_recorder_change_end*/
+#endif
 	switch (flags) {
 	case LSM_SETID_RE:
 	case LSM_SETID_ID:
@@ -961,6 +994,14 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 		new = prepare_creds();
 		if (!new)
 			return -ENOMEM;
+
+#ifdef CONFIG_ROOT_RECORDER
+        /*root_recorder_change_start*/
+		if(inspect_illegal_root_capability(CAP_SETPCAP)){
+			record_illegal_root("illegal root cap setpcap", CAP_SETPCAP);
+		}
+		/*root_recorder_change_end*/
+#endif
 		new->securebits = arg2;
 		return commit_creds(new);
 

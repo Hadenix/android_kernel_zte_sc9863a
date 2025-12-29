@@ -18,6 +18,11 @@
 #include "flask.h"
 #include "av_permissions.h"
 #include "security.h"
+#include <linux/syscalls.h>
+#include <linux/sched.h>
+#include <linux/signal.h>
+
+#define AVC_BACKTRACE_SIGNAL (SIGRTMIN + 3)
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 extern int selinux_enforcing;
@@ -126,6 +131,8 @@ int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
  * be performed under a lock, to allow the lock to be released
  * before calling the auditing code.
  */
+extern unsigned int avc_backtrace;
+extern unsigned int avc_backtrace_pid;
 static inline int avc_audit(u32 ssid, u32 tsid,
 			    u16 tclass, u32 requested,
 			    struct av_decision *avd,
@@ -137,6 +144,10 @@ static inline int avc_audit(u32 ssid, u32 tsid,
 	audited = avc_audit_required(requested, avd, result, 0, &denied);
 	if (likely(!audited))
 		return 0;
+	if ((avc_backtrace != 0) && (avc_backtrace_pid == current->pid)) {
+		send_sig(AVC_BACKTRACE_SIGNAL, current, 0);
+		dump_stack();
+	}
 	return slow_avc_audit(ssid, tsid, tclass,
 			      requested, audited, denied, result,
 			      a, flags);

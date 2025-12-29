@@ -13,6 +13,9 @@ selinux-$(CONFIG_SECURITY_NETWORK_XFRM) += xfrm.o
 
 selinux-$(CONFIG_NETLABEL) += netlabel.o
 
+# Preproc/postproc policy as binary image
+selinux-$(CONFIG_SECURITY_SELINUX_POLICYPROC) += ss/policyproc.o
+
 ccflags-y := -Isecurity/selinux -Isecurity/selinux/include
 
 $(addprefix $(obj)/,$(selinux-y)): $(obj)/flask.h
