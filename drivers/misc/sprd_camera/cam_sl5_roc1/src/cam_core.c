@@ -2259,7 +2259,7 @@ static int test_isp(struct camera_module *module,
 		ch_desc = &desc;
 		ch_desc->attach_cam_id = module->idx;
 		ch_desc->in_fmt = test_info->in_fmt;
-		ch_desc->prop = test_info->prop;
+		ch_desc->prop = (enum cam_ch_property)test_info->prop;
 		ch_desc->input_size.w = test_info->input_size.width;
 		ch_desc->input_size.h = test_info->input_size.height;
 		ch_desc->input_trim.size_x = ch_desc->input_size.w;
