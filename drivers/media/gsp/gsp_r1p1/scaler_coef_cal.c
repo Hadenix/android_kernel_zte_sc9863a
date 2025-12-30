@@ -341,7 +341,7 @@ static int16_t caluv_scaling_coef(int16_t tap,
 {
 	int16_t uv_coef_length;
 
-	if ((dir == 1)) {
+	if (dir == 1) {
 		uv_coef_length = (int16_t) (tap * 8);
 		cal_ymodel_coef(uv_coef_length, uv_coef_data_ptr, I, D,
 				pool_ptr);
