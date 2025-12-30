@@ -157,7 +157,7 @@ static enum isp_fetch_format get_fetch_format(uint32_t forcc)
 		format = ISP_FETCH_YVU420_2FRAME;
 		break;
 	default:
-		format = ISP_STORE_FORMAT_MAX;
+		format = ISP_FETCH_FORMAT_MAX;
 		pr_err("error, format 0x%x not support\n", forcc);
 		break;
 	}
