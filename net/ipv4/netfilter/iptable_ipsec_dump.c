@@ -99,16 +99,15 @@ free_clone:
 
 static int nf_xfrm4_input_decode_cap_log(struct sk_buff *skb)
 {
-	struct packet_type *ptype, *pt_prev;
+	struct packet_type *ptype;
+	struct packet_type *pt_prev = NULL;
 	struct net_device *orig_dev;
 	struct sk_buff *copy_skb;
 	int ret = 0;
 	struct xfrm_state *x;
 	int cr_xfrm_depth;
 
-	pt_prev = NULL;
-
-	/* If current is tunnel mode, no need to dump again.*/
+	/* If current is tunnel mode, no need to dump again. */
 	cr_xfrm_depth = skb->sp->len - 1;
 	if (unlikely(cr_xfrm_depth < 0))
 		return ret;
@@ -120,11 +119,11 @@ static int nf_xfrm4_input_decode_cap_log(struct sk_buff *skb)
 	copy_skb = skb_clone(skb, GFP_ATOMIC);
 
 	if (!copy_skb) {
-		pr_err("%s: clone failed,return!\n", __func__);
-		return ret;
+		pr_err("clone failed,return!\n");
+		return -ENOMEM;
 	}
 	orig_dev = copy_skb->dev;
-	if (!orig_dev || !orig_dev->name)
+	if (!orig_dev)
 		goto free_clone1;
 
 	rcu_read_lock();
@@ -141,7 +140,7 @@ static int nf_xfrm4_input_decode_cap_log(struct sk_buff *skb)
 
 	rcu_read_unlock();
 free_clone1:
-	/*free clone skb*/
+	/* Free clone skb. */
 	kfree_skb(copy_skb);
 	return  ret;
 }
