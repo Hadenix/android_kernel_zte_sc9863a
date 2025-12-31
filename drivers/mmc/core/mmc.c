@@ -2456,13 +2456,11 @@ int mmc_attach_mmc(struct mmc_host *host)
 	if (err)
 		goto err;
 
-		
-		if (false == emmc_proc_init) {
-			init_emmc_id_proc(host);
-			init_ddr_id_proc(host);
-			emmc_proc_init = true;
-		}
-		
+	if (false == emmc_proc_init) {
+		init_emmc_id_proc(host);
+		init_ddr_id_proc(host);
+		emmc_proc_init = true;
+	}
 
 	mmc_release_host(host);
 	err = mmc_add_card(host->card);
