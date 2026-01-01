@@ -1650,7 +1650,7 @@ static int sprd_img_handle_afm_stats(void *param)
 	if (ret) {
 		pr_err_ratelimited("fail to get afm frame %d\n", ret);
 	} else {
-		if ((afm_frame->frame_invalid == 0)) {
+		if (afm_frame->frame_invalid == 0) {
 			pr_debug("afm not init\n");
 			dev->afm_delta_frame++;
 		} else if (afm_frame->frame_invalid == -1) {
