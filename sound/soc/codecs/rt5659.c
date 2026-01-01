@@ -6224,7 +6224,7 @@ static int setup_mclk(struct device_node *np)
 	return 0;
 }
 
-static __init void rt5659_async_probe(void *data, async_cookie_t cookie)
+static void rt5659_async_probe(void *data, async_cookie_t cookie)
 {
 	int ret;
 	unsigned int val;
