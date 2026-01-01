@@ -668,7 +668,7 @@ struct altek_raw_info {
 	u8 mirror_flip;
 	enum e_alek_scinfo_color_order n_color_order;
 };
-#pragma pack()
+#pragma pack(pop)
 
 /*
 *@typedef S_SHADING_INFO
@@ -711,7 +711,7 @@ struct altek_shading_info {
 	u16 iso_step;
 	u8 reserved[18];
 };
-#pragma pack()
+#pragma pack(pop)
 
 
 /*
@@ -751,7 +751,7 @@ struct altek_irp_info {
 	u32 para_addr[IRP_TUNING_DEBUG_PARA_ADDR];
 	u32 reserved[IRP_TUNING_DEBUG_RESERVED];
 };
-#pragma pack()
+#pragma pack(pop)
 
 /*
 *@typedef S_IRP_GAMMA_TONE
@@ -762,7 +762,7 @@ struct altek_irp_info {
 struct altek_irp_gamma_tone {
 	u16 auwGamaTone[1027];
 };
-#pragma pack()
+#pragma pack(pop)
 
 
 /*
@@ -779,7 +779,7 @@ struct altek_sw_info {
 	u8 special_effect;
 	u8 reserver[59];
 };
-#pragma pack()
+#pragma pack(pop)
 
 /*
 *@typedef S_IQ_INFO_1
@@ -793,7 +793,7 @@ struct altek_iq_info_1 {
 	struct altek_irp_info irp_info;
 	struct altek_sw_info sw_info;
 };
-#pragma pack()
+#pragma pack(pop)
 
 /*
 *@typedef S_IQ_INFO_2
@@ -804,8 +804,7 @@ struct altek_iq_info_1 {
 struct altek_iq_info_2 {
 	struct altek_irp_gamma_tone tGammaTone;
 };
-#pragma pack()
-
+#pragma pack(pop)
 
 /*
 *@typedef altek_iq_info
@@ -817,7 +816,7 @@ struct altek_iq_info {
 	struct altek_iq_info_1 iq_info_1;
 	struct altek_iq_info_2 iq_info_2;
 };
-#pragma pack()
+#pragma pack(pop)
 
 /*
 *@struct isp_d_gain_info
@@ -831,7 +830,7 @@ struct altek_d_gain_info {
 	u32 isp_d_gain_gb;
 	u32 isp_d_gain_b;
 };
-#pragma pack()
+#pragma pack(pop)
 
 struct sprd_isp_time {
 	uint32_t sec;
