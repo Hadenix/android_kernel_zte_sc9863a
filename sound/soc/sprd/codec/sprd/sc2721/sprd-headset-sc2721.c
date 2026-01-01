@@ -2214,7 +2214,7 @@ failed_to_micbias_power_off:
 static struct gpio_map {
 	int type;
 	const char *name;
-} gpio_map[] __initdata = {
+} gpio_map[] = {
 	{HDST_GPIO_DET_L, "detect_l"},
 	{HDST_GPIO_DET_H, "detect_h"},
 	{HDST_GPIO_DET_MIC, "detect_mic"},

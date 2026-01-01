@@ -206,7 +206,7 @@ static struct sprd_asoc_ext_hook_map speaker_hook[] = {
 static struct gpio_map {
 	int type;
 	const char *name;
-} gpio_map[] __initdata = {
+} gpio_map[] = {
 	{BOARD_FUNC_SPK, "ext_spk_r"},
 	{BOARD_FUNC_SPK1, "ext_spk_l"},
 	{BOARD_FUNC_EAR, "rcv_ctrl"},
