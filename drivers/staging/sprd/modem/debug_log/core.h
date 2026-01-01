@@ -32,7 +32,8 @@
 
 #define CLK_SRC_MAX (5)
 #define STR_CH_DISABLE "DISABLE"
-#define HORL(bits, h) ((h) ? (bits) : (~(bits)))
+#define HORL(bits, h) ((h) ? (bits) : (unsigned int)(~(bits)))
+
 #define regmap_u_bits(rm, reg, bits, h) \
 	regmap_update_bits(rm, reg, bits, HORL(bits, h))
 
