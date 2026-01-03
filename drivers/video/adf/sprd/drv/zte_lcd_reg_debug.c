@@ -37,26 +37,20 @@ static void zte_lcd_reg_rw_func(struct sprd_dispc *ctrl, struct zte_lcd_reg_debu
 		ZTE_LCD_INFO("rwbuf[%d]= %x\n", i, reg_debug->wbuf[i]);
 	#endif
 
-	switch (reg_debug->is_read_mode) {
-	case REG_READ_MODE:
+	if (reg_debug->is_read_mode == REG_READ_MODE) {
 		read_length = reg_debug->wbuf[1];
 		mipi_dsi_set_max_return_size(dsi, read_length);
 		if (zte_lcd_reg_debug.dtype == DTYPE_DCS_READ)
 			mipi_dsi_dcs_read(dsi, reg_debug->wbuf[0], reg_debug->rbuf, read_length);
 		else
 			mipi_dsi_gen_read(dsi, &reg_debug->wbuf[0], 1, reg_debug->rbuf, read_length);
-
-		break;
-	case REG_WRITE_MODE:
+	} else if (reg_debug->is_read_mode == REG_WRITE_MODE) {
 		if (zte_lcd_reg_debug.dtype == DTYPE_DCS_WRITE)
 			mipi_dsi_dcs_write(dsi, write_lcd_cmd.payload, write_lcd_cmd.header.len);
 		else
 			mipi_dsi_gen_write(dsi, write_lcd_cmd.payload, write_lcd_cmd.header.len);
-
-		break;
-	default:
+	} else {
 		ZTE_LCD_ERROR("%s:rw error\n", __func__);
-		break;
 	}
 
 }
