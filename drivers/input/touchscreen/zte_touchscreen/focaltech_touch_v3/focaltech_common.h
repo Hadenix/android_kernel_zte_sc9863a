@@ -31,7 +31,7 @@
 #ifndef __LINUX_FOCALTECH_COMMON_H__
 #define __LINUX_FOCALTECH_COMMON_H__
 
-#include "focaltech_config.h"
+#include "firmware_config/firmware_default/focaltech_config.h"
 
 /*****************************************************************************
 * Macro definitions using #define
